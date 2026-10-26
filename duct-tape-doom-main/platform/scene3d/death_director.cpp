@@ -166,8 +166,8 @@ void startDeath(const mobj_t &thing,float dx,float dy,float speed,float side,flo
     }
     deaths[&thing]=d;
 }
-void forgetDeath(const mobj_t *thing) {deaths.erase(thing);forgetFall(thing);}
-void deathsShutdown() {deaths.clear();arts.clear();attackPace.clear();attackTic=-1;fallsShutdown();}
+void forgetDeath(const mobj_t *thing) {deaths.erase(thing);forgetFall(thing);forgetRagdoll(thing);}
+void deathsShutdown() {deaths.clear();arts.clear();attackPace.clear();attackTic=-1;fallsShutdown();ragdollsShutdown();}
 
 bool deathView(const mobj_t &thing,float fraction,DeathView &view) {
     if(!settings.deathDirector)return false;

@@ -26,6 +26,7 @@
 #include "m_misc.h"
 #include "d_net.h"
 #include "g_game.h"
+#include "game_profile.h"
 #ifdef DOOM_NATIVE
 #include <SDL3/SDL.h>
 #endif
@@ -150,7 +151,7 @@ void I_Error(char *error, ...)
     I_ShutdownSound();
     I_ShutdownMusic();
 #ifdef DOOM_NATIVE
-    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "DOOM", message, NULL);
+    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, Game_Title(), message, NULL);
 #endif
     I_ShutdownGraphics();
     exit(EXIT_FAILURE);

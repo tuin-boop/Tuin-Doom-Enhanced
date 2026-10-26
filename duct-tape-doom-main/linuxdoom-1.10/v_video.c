@@ -198,6 +198,77 @@ V_CopyRect
  
 
 //
+// DrawClippedPatch
+// The body of V_DrawPatch and V_DrawPatchFlipped. Patches wider than the
+// screen, such as the 560-pixel title pages and 576-pixel status bar of
+// the 2019 and later IWADs, are centered; columns and rows off the screen
+// are clipped instead of the whole patch being dropped.
+//
+static void
+DrawClippedPatch
+( int		x,
+  int		y,
+  int		scrn,
+  patch_t*	patch,
+  boolean	flipped )
+{
+    int		count;
+    int		col;
+    int		top;
+    column_t*	column;
+    byte*	dest;
+    byte*	source;
+    int		w;
+
+    w = SHORT(patch->width);
+    y -= SHORT(patch->topoffset);
+    x -= SHORT(patch->leftoffset);
+    if (w > SCREENWIDTH)
+	x -= (w - SCREENWIDTH)/2;
+    if ((unsigned)scrn > 4)
+	return;
+
+    if (!scrn && x < SCREENWIDTH && x+w > 0)
+	V_MarkRect (x < 0 ? 0 : x, y < 0 ? 0 : y,
+		    (x+w > SCREENWIDTH ? SCREENWIDTH : x+w) - (x < 0 ? 0 : x),
+		    SHORT(patch->height));
+
+    for (col = 0 ; col<w ; x++, col++)
+    {
+	if (x < 0 || x >= SCREENWIDTH)
+	    continue;
+	column = (column_t *)((byte *)patch
+			      + LONG(patch->columnofs[flipped ? w-1-col : col]));
+
+	// step through the posts in a column
+	while (column->topdelta != 0xff )
+	{
+	    source = (byte *)column + 3;
+	    top = y + column->topdelta;
+	    count = column->length;
+	    if (top < 0)
+	    {
+		source -= top;
+		count += top;
+		top = 0;
+	    }
+	    if (top + count > SCREENHEIGHT)
+		count = SCREENHEIGHT - top;
+	    dest = screens[scrn] + top*SCREENWIDTH + x;
+
+	    while (count-- > 0)
+	    {
+		*dest = *source++;
+                if (v_overlayactive && !scrn) v_overlaymask[dest - screens[0]] = 255;
+		dest += SCREENWIDTH;
+	    }
+	    column = (column_t *)(  (byte *)column + column->length
+				    + 4 );
+	}
+    }
+}
+
+//
 // V_DrawPatch
 // Masks a column based masked pic to the screen. 
 //
@@ -251,58 +322,7 @@ V_DrawPatchFlipped
   int		scrn,
   patch_t*	patch ) 
 { 
-
-    int		count;
-    int		col; 
-    column_t*	column; 
-    byte*	desttop;
-    byte*	dest;
-    byte*	source; 
-    int		w; 
-	 
-    y -= SHORT(patch->topoffset); 
-    x -= SHORT(patch->leftoffset); 
-#ifdef RANGECHECK 
-    if (x<0
-	||x+SHORT(patch->width) >SCREENWIDTH
-	|| y<0
-	|| y+SHORT(patch->height)>SCREENHEIGHT 
-	|| (unsigned)scrn>4)
-    {
-      fprintf( stderr, "Patch origin %d,%d exceeds LFB\n", x,y );
-      I_Error ("Bad V_DrawPatch in V_DrawPatchFlipped");
-    }
-#endif 
- 
-    if (!scrn)
-	V_MarkRect (x, y, SHORT(patch->width), SHORT(patch->height)); 
-
-    col = 0; 
-    desttop = screens[scrn]+y*SCREENWIDTH+x; 
-	 
-    w = SHORT(patch->width); 
-
-    for ( ; col<w ; x++, col++, desttop++) 
-    { 
-	column = (column_t *)((byte *)patch + LONG(patch->columnofs[w-1-col])); 
- 
-	// step through the posts in a column 
-	while (column->topdelta != 0xff ) 
-	{ 
-	    source = (byte *)column + 3; 
-	    dest = desttop + column->topdelta*SCREENWIDTH; 
-	    count = column->length; 
-			 
-	    while (count--) 
-	    { 
-		*dest = *source++; 
-                if (v_overlayactive && !scrn) v_overlaymask[dest - screens[0]] = 255;
-		dest += SCREENWIDTH; 
-	    } 
-	    column = (column_t *)(  (byte *)column + column->length 
-				    + 4 ); 
-	} 
-    }			 
+    DrawClippedPatch (x, y, scrn, patch, true);
 } 
  
 

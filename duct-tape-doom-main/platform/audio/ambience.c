@@ -7,13 +7,16 @@
  * pillars and odd corners. Each spot eases over a few tenths of a second, so
  * sounds hand over smoothly. A kind plays in up to three layers, the spots
  * shared among them, so a room full of computers sounds fuller rather than
- * only louder; the wind is one field all openings and open air add into.
+ * only louder; the wind is one field all openings and open air add into, and
+ * the rain the same field again while it rains, tapping on every whole
+ * pane of a window that looks out under the sky.
  * Under it all a faint room tone runs. See ambience.h. */
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
 #include "doomstat.h"
 #include "p_local.h"
+#include "../game_profile.h"
 #include "acoustic_graph.h"
 #include "ambience_spots.h"
 #include "map.h"
@@ -31,6 +34,8 @@
 #define THROUGH_WALL_WIND 0.1f
 #define OPEN_AIR 0.8f      /* the wind's own strength around a listener out under the sky */
 #define PI_F 3.14159265f
+
+static float raining; /* how hard it rains (Ambience_Rain) */
 
 static float units(fixed_t v) { return v / (float)FRACUNIT; }
 
@@ -64,9 +69,10 @@ static void ray(spot_t *s, int index, float lx, float ly, int walls, int fresh)
 }
 
 void Ambience_Update(ambience_voice_t voices[AMBIENT_KINDS][AMBIENCE_LAYERS], float level, int walls, int distance,
-                     ambience_strike_t *strike)
+                     ambience_strike_t *strike, ambience_voice_t *computer_body)
 {
     memset(voices, 0, sizeof(ambience_voice_t) * AMBIENT_KINDS * AMBIENCE_LAYERS);
+    if (computer_body) *computer_body = (ambience_voice_t){0};
     strike->due = 0;
     const mobj_t *listener = players[consoleplayer].mo;
     if (gamestate != GS_LEVEL || !listener || !listener->subsector || !numsectors) return;
@@ -78,22 +84,31 @@ void Ambience_Update(ambience_voice_t voices[AMBIENT_KINDS][AMBIENCE_LAYERS], fl
     if (walls) Acoustic_Follow();
     /* Out under the sky the listener is in the wind, whatever spots lie
        about; eased, so stepping out of a door blows up rather than switches. */
-    static float open_air;
-    open_air += ((Map_Sky(listener->subsector->sector) ? 1 : 0) - open_air) * ease;
+    static float open_air, open_rain;
+    int sky = Map_Sky(listener->subsector->sector);
+    open_air += ((sky && Game_HasEffect(GAME_EFFECT_WIND) ? 1 : 0) - open_air) * ease;
+    open_rain += ((sky ? 1 : 0) - open_rain) * ease;
 
     for (int k = 0; k < AMBIENT_KINDS; ++k)
     {
         if (k == AMBIENT_ROOM) continue;
         const reach_t *r = &ambience_reach[k];
         float sum2[AMBIENCE_LAYERS] = {0}, pan[AMBIENCE_LAYERS] = {0}, dull[AMBIENCE_LAYERS] = {0};
-        if (k == AMBIENT_WIND && open_air > 1e-3f)
+        /* The rain is the wind's field again, as loud as it rains; it taps
+           on the windows as hard. */
+        float amount = k == AMBIENT_RAIN || k == AMBIENT_GLASS_RAIN ? raining : 1;
+        if (amount < 1e-3f) continue;
+        float open = k == AMBIENT_WIND ? open_air : k == AMBIENT_RAIN ? open_rain : 0;
+        if (open > 1e-3f)
         {
-            float v = OPEN_AIR * open_air;
+            float v = OPEN_AIR * open;
             sum2[0] = v * v; pan[0] = v * v * 128; dull[0] = v * v * logf(20000);
         }
         for (int i = 0; i < ambience_spots[k].count; ++i)
         {
             spot_t *s = &ambience_spots[k].spot[i];
+            /* Only on glass, and not once it has broken. */
+            if (s->line >= 0 && !Acoustic_GlassWhole(s->line)) continue;
             float lit = 1, was = s->light;
             int living = 0;
             if (k == AMBIENT_LAMP) { lit = Ambience_LampLight(s, &living); s->light = lit; }
@@ -113,7 +128,7 @@ void Ambience_Update(ambience_voice_t voices[AMBIENT_KINDS][AMBIENCE_LAYERS], fl
             {
                 /* The ways round, unless solid wall lets more through. */
                 acoustic_heard_t h;
-                float wall = fade(d, r) * (k == AMBIENT_WIND ? THROUGH_WALL_WIND : THROUGH_WALL);
+                float wall = fade(d, r) * (k == AMBIENT_WIND || k == AMBIENT_RAIN ? THROUGH_WALL_WIND : THROUGH_WALL);
                 /* However many ways it comes by, never louder than in the open. */
                 if (Acoustic_Heard(s->x, s->y, s->sector, fade, r, &h) && h.gain > wall)
                 { target = fminf(h.gain, fade(d, r)); cutoff = fminf(h.cutoff, dulled(h.distance, r, distance)); fx = h.from_x; fy = h.from_y; }
@@ -137,17 +152,27 @@ void Ambience_Update(ambience_voice_t voices[AMBIENT_KINDS][AMBIENCE_LAYERS], fl
             float ax = fx - lx, ay = fy - ly;
             float sep = 128 - 96 * sinf(atan2f(ay, ax) - facing) * fminf(hypotf(ax, ay) / 64, 1);
             /* The wind is one field the openings add up into, not separate emitters. */
-            int l = k == AMBIENT_WIND ? 0 : i % AMBIENCE_LAYERS;
+            int l = k == AMBIENT_WIND || k == AMBIENT_RAIN ? 0 : i % AMBIENCE_LAYERS;
             sum2[l] += v * v; pan[l] += v * v * sep; dull[l] += v * v * logf(s->cutoff);
         }
         /* The cap is on the kind as a whole: more layers make it fuller, not louder. */
         float total2 = 0;
         for (int l = 0; l < AMBIENCE_LAYERS; ++l) total2 += sum2[l];
         float cap = total2 > 1.5f * 1.5f ? 1.5f / sqrtf(total2) : 1;
+        /* One continuous body follows the same audible computer field. The
+           mixer shares its budget with the three alternative activity takes. */
+        if (k == AMBIENT_COMPUTER && computer_body && total2 > 1e-8f)
+        {
+            float where = 0, cutoff = 0;
+            for (int l = 0; l < AMBIENCE_LAYERS; ++l) { where += pan[l]; cutoff += dull[l]; }
+            float gain = sqrtf(total2) * cap * Ambient_Level(k) * level * amount, sep = where / total2;
+            *computer_body = (ambience_voice_t){ gain * fminf(1, (254 - sep) / 127), gain * fminf(1, sep / 127),
+                                                0.8f * gain, expf(cutoff / total2) };
+        }
         for (int l = 0; l < AMBIENCE_LAYERS; ++l)
         {
             if (sum2[l] < 1e-8f) continue;
-            float gain = sqrtf(sum2[l]) * cap * Ambient_Level(k) * level, sep = pan[l] / sum2[l];
+            float gain = sqrtf(sum2[l]) * cap * Ambient_Level(k) * level * amount, sep = pan[l] / sum2[l];
             voices[k][l] = (ambience_voice_t){ gain * fminf(1, (254 - sep) / 127), gain * fminf(1, sep / 127),
                                                0.8f * gain, expf(dull[l] / sum2[l]) };
         }
@@ -174,3 +199,4 @@ void Ambience_Silence(float x, float y, float z, float radius)
 
 void Ambience_Glaze(int line, int whole) { Acoustic_Glass(line, whole); }
 void Ambience_ShowGlass(int shown) { Acoustic_ShowGlass(shown); }
+void Ambience_Rain(float amount) { raining = amount < 0 ? 0 : amount > 1 ? 1 : amount; }

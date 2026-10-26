@@ -6,10 +6,12 @@ namespace doom3d {
 bool sunBaked=false;
 float sunLevel=0; // Typical sky-sector light; indoor sun patches rise toward it.
 std::array<float,3> sunTint={1,1,1};
-float sunAzimuth[2]={1,0}; // Horizontal direction toward the baked sun (40 degrees high).
+float sunAzimuth[2]={1,0}; // Horizontal direction toward the baked sun (sunElevation high).
 float sunDirection[3]={0,0,1};
 
 float sunYaw=0,sunGlow=0;
+// The light's height above the horizon, and the drawn disc's (Game_Sun).
+float sunElevation=40*doomPi/180,sunDiscElevation=40*doomPi/180,sunShade=0.3f,sunGain=0;
 // Sky sectors joined by sky-to-sky lines form one opening (a hole may be
 // several sectors, nested or side by side). Its outer edge decides how
 // enclosed it is: indoor lines lead into non-sky sectors.
@@ -21,7 +23,11 @@ std::vector<char> beamAir;
 // Sun shadows, baked once per level into the contact map's blue channel and
 // the wall atlas alpha. The sky texture's brightest columns face the sun
 // (sky.frag maps column x to yaw -x*2pi/(4*width)) and also give its tint;
-// the elevation is fixed. Rays see the sector heights in bakeMap.
+// the elevation is fixed at 40 degrees, or (Game_Sun fromSky) follows the
+// height sky.frag shows their brightness at: painted on the horizon it
+// lights from 35 degrees, painted 45 degrees up or more from 60. Lower
+// suns left walled courtyards wholly in shade.
+// Rays see the sector heights in bakeMap.
 static float enclosure(const sector_t *sector,float *light=nullptr);
 static void bakeShafts();
 static void findSkyOpenings();
@@ -78,9 +84,37 @@ void bakeSun() {
     }
     double peak=std::max({tint[0],tint[1],tint[2],1e-9});
     for(int c=0;c<3;++c)sunTint[c]=total>0?(float)(0.5+0.5*tint[c]/peak):1.0f;
-    float yaw=-(best+0.5f)*2*doomPi/(4.0f*sky.width),elevation=40*doomPi/180;
+    game_sun game;Game_Sun(&game);sunShade=game.shade;sunGain=game.gain;
+    float elevation=40*doomPi/180,daylight=1;sunDiscElevation=elevation;
+    if(game.fromSky) {
+        // How bright the sky is on average: a grey day sky about 0.34, a
+        // dim red one 0.14, night blue under 0.1. Dark skies shine weaker,
+        // with softer shadows, in their own (paled) colour: moonlight.
+        double sum=0,color[3]={};
+        for(int y=0;y<sky.height;++y)for(int x=0;x<sky.width;++x) {
+            size_t i=(size_t)y*sky.width+x;if(!sky.pixels[2*i+1])continue;
+            const byte *rgb=palette+sky.pixels[2*i]*3;
+            sum+=(0.299*rgb[0]+0.587*rgb[1]+0.114*rgb[2])/255.0;
+            for(int c=0;c<3;++c)color[c]+=rgb[c];
+        }
+        daylight=std::clamp((float)(sum/std::max(1,sky.width*sky.height))-0.06f,0.0f,0.24f)/0.24f;
+        sunShade*=0.6f+0.4f*daylight;sunGain*=0.35f+0.65f*daylight;
+        double top=std::max({color[0],color[1],color[2],1e-9});
+        for(int c=0;c<3;++c)sunTint[c]=sunTint[c]*daylight+(float)(0.6+0.4*color[c]/top)*(1-daylight);
+    }
+    if(game.fromSky&&total>0) {
+        // sky.frag: texture row fraction v shows at rise (0.70-v)/0.68.
+        double rows=0;
+        for(int d=-4;d<=4;++d)for(int y=0;y<sky.height;++y) {const byte *rgb;rows+=weight((best+d+sky.width)%sky.width,y,rgb)*(y+0.5);}
+        float painted=std::atan((0.70f-(float)(rows/total/sky.height))/0.68f);
+        elevation=(35+25*std::clamp(painted/(45*doomPi/180),0.0f,1.0f))*doomPi/180;
+        sunDiscElevation=std::max(painted,3*doomPi/180);
+    }
+    sunElevation=elevation;
+    float yaw=-(best+0.5f)*2*doomPi/(4.0f*sky.width);
     float bright=(float)std::pow(total/(9.0*sky.height),0.25),glow=std::clamp((bright-0.2f)/0.4f,0.0f,1.0f);
-    sunYaw=yaw;sunGlow=glow*glow*(3-2*glow);
+    sunYaw=yaw;sunGlow=glow*glow*(3-2*glow)*daylight; // no sun in a night sky
+    if(!levelMood().sun)sunGlow=0; // An episode with the sun hidden (Game_Mood).
     const float direction[3]={std::cos(yaw)*std::cos(elevation),std::sin(yaw)*std::cos(elevation),std::sin(elevation)};
     float sunLength=std::hypot(direction[0],direction[1]),sunX=direction[0]/sunLength,sunY=direction[1]/sunLength;
     sunAzimuth[0]=sunX;sunAzimuth[1]=sunY;
@@ -99,10 +133,12 @@ void bakeSun() {
     if(!contactTexture)I_Error((char*)"Could not allocate surface maps");
     uploadWallBake();
     for(int c=0;c<3;++c)sunDirection[c]=direction[c];
-    bakeShafts();
-    sunLevel=level;
-    fprintf(stderr,"3D sun: yaw %.0f degrees, %zu sunlit cells, %zu sunbeams, %zu wall strips in %dx%d, baked in %.0f ms.\n",
-        yaw*180/doomPi,lit.load(),sunShafts.size(),bakeOrder.size(),atlasWidth,atlasHeight,(SDL_GetTicksNS()-start)/1e6);
+    // Hidden by the episode's mood: no sunlight, only its direction (which
+    // way the rain blows) is kept.
+    if(levelMood().sun)bakeShafts();else sunShafts.clear();
+    sunLevel=levelMood().sun?level:0;
+    fprintf(stderr,"3D sun: yaw %.0f degrees, %.0f up, %zu sunlit cells, %zu sunbeams, %zu wall strips in %dx%d, baked in %.0f ms.\n",
+        yaw*180/doomPi,elevation*180/doomPi,lit.load(),sunShafts.size(),bakeOrder.size(),atlasWidth,atlasHeight,(SDL_GetTicksNS()-start)/1e6);
 }
 // Sunbeams: about one per 24 units of sunlit floor in beam air (beamAir),
 // jittered within its block so the beams never line up in rows. Each runs
@@ -250,7 +286,7 @@ float sunLightAt(float x,float y,const sector_t *sector,float light) {
     float lifted=light+std::round(std::max(0.0f,sunLevel-light)*visible*16)/16;
     if(sector->ceilingpic!=skyflatnum)return lifted;
     float enclosed,floor;packOutdoor(sector,&enclosed,&floor);
-    float shaded=light-std::round(light*0.3f*(1-visible)*16)/16;
+    float shaded=light-std::round(light*sunShade*(1-visible)*16)/16+std::round(light*sunGain*visible*16)/16;
     return std::max(std::round((shaded+(lifted-shaded)*enclosed)*16)/16,std::min(light,floor));
 }
 // CPU twin of seamLight at the nearest cell, for sprites and the weapon.

@@ -677,12 +677,14 @@ void F_BunnyScroll (void)
     if (scrolled < 0)
 	scrolled = 0;
 		
+    // The 2019 and later IWADs widen the pictures around the classic
+    // 320 columns: scroll across the middle of each.
     for ( x=0 ; x<SCREENWIDTH ; x++)
     {
 	if (x+scrolled < 320)
-	    F_DrawPatchCol (x, p1, x+scrolled);
+	    F_DrawPatchCol (x, p1, x+scrolled + (SHORT(p1->width)-320)/2);
 	else
-	    F_DrawPatchCol (x, p2, x+scrolled - 320);		
+	    F_DrawPatchCol (x, p2, x+scrolled - 320 + (SHORT(p2->width)-320)/2);
     }
 	
     if (finalecount < 1130)

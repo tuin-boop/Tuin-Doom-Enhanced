@@ -39,6 +39,23 @@ static inline float doom_sprite_glow(const uint8_t *pixels,size_t count,const ui
     for(int c=0;c<3;++c) out[c]=fmaxf(0.06f,out[c]/peak);
     return opaque?score/(float)opaque:0;
 }
+/* Where a sprite's glow sits: the height of its pixels in the glow color
+ * (out of doom_sprite_glow), weighted like there, as a fraction of the
+ * height from the bottom; 0.85 when nothing glows. */
+static inline float doom_sprite_glow_height(const uint8_t *pixels,int w,int h,const uint8_t *palette,const float glow[3]) {
+    float gl=sqrtf(glow[0]*glow[0]+glow[1]*glow[1]+glow[2]*glow[2]),sum=0,weighted=0;
+    for(int y=0;y<h;++y) for(int x=0;x<w;++x) {
+        size_t i=(size_t)y*w+x;
+        if(!pixels[i*2+1]) continue;
+        const uint8_t *rgb=palette+pixels[i*2]*3;
+        float r=rgb[0]/255.0f,g=rgb[1]/255.0f,b=rgb[2]/255.0f;
+        float hi=fmaxf(r,fmaxf(g,b)),lo=fminf(r,fminf(g,b)),chroma=hi-lo,l=sqrtf(r*r+g*g+b*b);
+        if(hi<0.5f||chroma<hi*0.2f||gl<=0||(r*glow[0]+g*glow[1]+b*glow[2])/(l*gl)<0.95f) continue;
+        float weight=hi*hi*hi*hi*chroma*chroma;
+        sum+=weight;weighted+=weight*(h-0.5f-y);
+    }
+    return sum>0&&h>0?weighted/sum/h:0.85f;
+}
 /* Conservative sphere/AABB rejection: retain tangent bounds and never drop
  * illumination inside the light radius, including very large triangles. */
 static inline int doom_flash_reaches_bounds(const doom_flash_t *light,const float low[3],const float high[3]) {

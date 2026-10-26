@@ -72,16 +72,47 @@ void main() {
     // silhouettes meet a soft band rather than a hard painted edge.
     if(c.materials.z>0.0&&c.effects.z==0.0)
         color.rgb=mix(color.rgb,low,0.55*(1.0-smoothstep(-0.05,0.3,ray.z)));
-    // The sun, 40 degrees up at the baked yaw (bakeSun in scene3d/bake_sun.cpp): a small
+    // The sun at the baked yaw and the height the sky paints it (c.outdoor.w;
+    // bakeSun in scene3d/bake_sun.cpp, 40 degrees for DOOM): a small
     // disc and a wide glow in its tint. Smooth, like the softened sky around
     // it; a dither here shimmers over a large part of the sky.
     if(c.fx2.w>0.0) {
-        vec3 toward=vec3(cos(c.fx2.z)*0.76604,sin(c.fx2.z)*0.76604,0.64279);
+        vec3 toward=vec3(cos(c.fx2.z)*cos(c.outdoor.w),sin(c.fx2.z)*cos(c.outdoor.w),sin(c.outdoor.w));
         float a=acos(clamp(dot(ray,toward),-1.0,1.0));
         float disc=1.0-smoothstep(0.016,0.024,a),glow=exp(-a*a/0.012)*0.45+exp(-a/0.35)*0.12;
         float amount=saturate(disc*0.75+glow)*c.fx2.w;
         color.rgb=mix(color.rgb,max(color.rgb,c.sun.rgb),saturate(disc*c.fx2.w))+c.sun.rgb*amount*(1.0-disc*0.5);
     }
+    // Far rain: weather.cpp drops rain only in the map's open sectors near
+    // the eye, and the sky (ceilings and the band over lower neighbors
+    // included) hides everything past it, so the rain would end at the
+    // courtyard walls and the sky ceiling. Past them it falls on in the sky
+    // itself: two sheets of streaks one Doom pixel wide, about 900 and 1800
+    // units out, world-anchored like the sky, falling at the rain's speed
+    // and slanted by its wind, stepping at the tic rate. Pale, the far sheet
+    // fainter, fading out toward the zenith.
+    if(c.weather.x>0.0) {
+        float pixel=160.0*c.projection.x; // Doom pixels per radian
+        float tic=floor(c.fog.w*35.0)/35.0;
+        vec2 across=vec2(-sin(angle),cos(angle));
+        float slant=dot(c.weather.yz,across)/520.0;
+        float drops=0.0;
+        for(int layer=0;layer<2;++layer) {
+            float far=layer==0?900.0:1800.0;
+            vec2 cellAt=floor(vec2(angle,rise)*pixel);
+            float column=floor(cellAt.x+slant*cellAt.y+0.5)+float(layer)*7919.0;
+            float seed=fract(sin(column*12.9898+float(layer)*78.233)*43758.5453);
+            if(seed>=0.45*c.weather.x) continue;
+            float period=36.0+28.0*fract(seed*91.7),streak=3.0+4.0*fract(seed*37.1);
+            float along=cellAt.y+520.0/far*pixel*tic+seed*period*11.0;
+            if(mod(along,period)<streak) drops=max(drops,layer==0?0.42:0.22);
+        }
+        drops*=1.0-smoothstep(0.9,1.8,rise);
+        color.rgb=mix(color.rgb,max(color.rgb*1.5,low*1.3+0.05),drops);
+    }
+    // An episode whose outdoors lie dark (Game_Mood) dims its sky with them,
+    // and its hour can tint it.
+    color.rgb*=c.mood.x*c.mood.yzw;
     vec4 fog=fogAlong(c.eye.xyz+ray*2000.0);
     color.rgb=(color.rgb*fog.a+fog.rgb)*c.fx.x;
     // Mirror pass (world.frag): the sky is far, but stays a faint reflection.

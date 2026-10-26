@@ -1,3 +1,4 @@
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "doomdef.h"
@@ -8,6 +9,7 @@
 #include "i_video.h"
 #include "m_argv.h"
 #include "v_video.h"
+#include "game_profile.h"
 #include <SDL3/SDL.h>
 #ifdef DOOM_RENDER3D
 #include "i_render3d.h"
@@ -88,7 +90,11 @@ void I_InitGraphics(void)
     if (width < 320 || width > 8192 || height < 240 || height > 8192)
         I_Error("Window dimensions must be between 320x240 and 8192x8192");
     SDL_WindowFlags flags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY;
-    window = SDL_CreateWindow("DOOM — Esc: menu · F11: fullscreen · Cmd-Q: quit", width, height, flags);
+    // Render checks draw off screen: no window comes up over the user's work
+    if (M_CheckParm("-rendercheck")) flags |= SDL_WINDOW_HIDDEN;
+    char title[128];
+    snprintf(title, sizeof(title), "%s — Esc: menu · F11: fullscreen · Cmd-Q: quit", Game_Title());
+    window = SDL_CreateWindow(title, width, height, flags);
     if (!window)
         I_Error("Could not open the game window: %s", SDL_GetError());
     SDL_SetWindowMinimumSize(window, 320, 240);

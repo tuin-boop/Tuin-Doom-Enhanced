@@ -694,6 +694,12 @@ void I_SoundAt(int handle, fixed_t x, fixed_t y, fixed_t z)
   handle = x = y = z = 0;
 }
 
+fixed_t I_SoundReach(int id)
+{
+  id = 0;
+  return FRACUNIT;
+}
+
 
 
 

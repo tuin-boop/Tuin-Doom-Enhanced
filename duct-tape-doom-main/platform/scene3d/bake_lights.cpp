@@ -51,7 +51,7 @@ static bool poolSurface(int sector,bool ceiling) {
     const Image &image=lumpImage(lump,true);
     if(image.emissionWeight<=0)return false;
     char name[9];memcpy(name,lumpinfo[lump].name,8);name[8]=0;
-    int kind=doom_emissive_kind(name,1);
+    int kind=Game_GlowKind(name,1);
     return kind==DOOM_EMISSIVE_LAVA||kind==DOOM_EMISSIVE_SLIME||kind==DOOM_EMISSIVE_MAGMA||image.emissionCoverage>=0.4f;
 }
 // One area light per pool: neighboring sectors whose floor (or ceiling)
@@ -163,6 +163,7 @@ static void gatherStatic(const BakeMap &map,int sector,float x,float y,float z,c
         // The pool's own surface (facing the way the pool glows).
         else if(inside&&normal[2]*(bakeAreas[n-points].ceiling?-1:1)>0.5f)sheen+=weight;
     }
+    addGlassLight(map,sector,x,y,z,normal,sum);
     float scale=capWindowLight(window);
     for(int c=0;c<3;++c) {sum[c]+=window[c];towards[c]+=windowTowards[c]*scale;}
     total+=windowTotal*scale;
@@ -190,6 +191,35 @@ void lightStrip(const BakeMap &map,const BakeStrip &strip,bool only) {
         gatherStatic(map,strip.sector,x,y,z,normal,&wallBakeCells[4*i],only?&wallDirectionCells[4*texel]:nullptr);
     });
 }
+// A window frame at night (Game_Mood shineOut): a thin indoor sector (at
+// most 64 units across) beside the sky, as bright as it and brighter than
+// every indoor sector beside it, has the outdoor level from id (E1M1's
+// FLAT14 room has its frames at 255 in a 224 room). Its room, the brightest
+// of those, is what shines through it; any other sector is its own room.
+static const sector_t *nightRoom(const sector_t *sector) {
+    if(!levelMood().shineOut||sector->ceilingpic==skyflatnum)return sector;
+    int sky=-1;const sector_t *room=nullptr;
+    float x0=INFINITY,y0=INFINITY,x1=-INFINITY,y1=-INFINITY;
+    for(int n=0;n<sector->linecount;++n) {
+        const line_t *side=sector->lines[n];
+        for(const vertex_t *v:{side->v1,side->v2}) {
+            x0=std::min(x0,units(v->x));x1=std::max(x1,units(v->x));
+            y0=std::min(y0,units(v->y));y1=std::max(y1,units(v->y));
+        }
+        const sector_t *other=side->frontsector==sector?side->backsector:side->frontsector;
+        if(!other||other==sector)continue;
+        if(other->ceilingpic==skyflatnum)sky=std::max(sky,(int)other->lightlevel);
+        else if(!room||other->lightlevel>room->lightlevel)room=other;
+    }
+    bool frame=sky>=0&&room&&sector->lightlevel>=sky&&sector->lightlevel>room->lightlevel&&std::min(x1-x0,y1-y0)<=64;
+    return frame?room:sector;
+}
+// A sector's light level (given as level) at night: a window frame's is its
+// room's, with the outdoors dark.
+static int nightFrameLevel(const sector_t *sector,int level) {
+    const sector_t *room=nightRoom(sector);
+    return room==sector?level:room->lightlevel;
+}
 // Lamp-lit sectors: Doom maps fake a lamp's glow with a brighter sector under
 // and around it (E1M1's monitor boxes stand at 255 in a 128 room). With
 // baked lights that glow is drawn by the lamps themselves, falling off
@@ -213,13 +243,17 @@ void lightStrip(const BakeMap &map,const BakeStrip &strip,bool only) {
 // This needs no dimmer neighbor; only regions mostly open to the sky keep
 // their level. Sectors whose lamps flicker count at their low, and only
 // steady light dims a region: with the lamps out, a room is as Doom has it.
+// When the episode's mood turns window light round (Game_Mood shineOut),
+// rooms opening onto the sky dim like any other: the night outside no
+// longer lights them, so only their own lamps do. Their window frames,
+// which id gave the outdoor level, take their room's (nightFrameLevel).
 static void classifyLampSectors() {
     lampDrop.assign(numsectors,0.0f);
     if(flatLightCells.empty()||seamCells.empty())return;
     std::vector<float> least(numsectors,INFINITY),shown(numsectors,0.0f);
     std::vector<int> cells(numsectors,0);
     std::vector<float> level(numsectors);
-    for(int i=0;i<numsectors;++i)level[i]=std::clamp(lampLightLevel(&sectors[i])/255.0f,0.12f,1.0f);
+    for(int i=0;i<numsectors;++i)level[i]=std::clamp(nightFrameLevel(&sectors[i],lampLightLevel(&sectors[i]))/255.0f,0.12f,1.0f);
     for(size_t i=0;i<seamCells.size();++i) {
         int s=seamCells[i].own;if(s==noSector)continue;
         const uint8_t *cell=flatCell(floorLight,i);
@@ -279,7 +313,7 @@ static void classifyLampSectors() {
         }
         if(!changed)break;
     }
-    for(int i=0;i<numsectors;++i)lampDrop[i]=level[i]-base[i];
+    for(int i=0;i<numsectors;++i)lampDrop[i]=std::clamp(lampLightLevel(&sectors[i])/255.0f,0.12f,1.0f)-base[i];
 }
 // The sky's color: the upper rows of the sky texture, above any horizon art,
 // halfway to white.
@@ -296,6 +330,19 @@ std::array<float,3> skyColor() {
     for(int c=0;c<3;++c)tint[c]=(float)(0.5+0.5*sum[c]/peak);
     return tint;
 }
+// The sky's color at the horizon, as sky.frag draws its low rows: what
+// distant outdoor surfaces fade into (Game_Sun haze).
+std::array<float,3> skyHorizon() {
+    const Image &sky=wallImage(skytexture);
+    const byte *palette=(const byte*)W_CacheLumpName((char*)"PLAYPAL",PU_CACHE);
+    double sum[3]={},count=0;
+    for(int y=sky.height*88/100;y<std::max(sky.height*88/100+1,sky.height*96/100);++y)for(int x=0;x<sky.width;++x) {
+        size_t i=(size_t)y*sky.width+x;if(!sky.pixels[2*i+1])continue;
+        for(int c=0;c<3;++c)sum[c]+=palette[sky.pixels[2*i]*3+c]/255.0;
+        ++count;
+    }
+    return {(float)(count?sum[0]/count:0.5),(float)(count?sum[1]/count:0.5),(float)(count?sum[2]/count:0.5)};
+}
 // Window light: every opening from an indoor sector into a sky sector
 // (windows, doorways, the rim of a hole in the ceiling) is a soft lamp facing
 // inward, built as glowing panels 2 units inside it, about 32 units wide and
@@ -309,13 +356,46 @@ std::array<float,3> skyColor() {
 // outside it against its sunniest neighbors (below), so the sunny side of a
 // room leads; capWindowLight keeps several windows from adding past the
 // outdoor level.
+// An episode whose mood turns window light round (Game_Mood shineOut) has
+// the panels 2 units outside instead, facing out, shining by how much
+// brighter the room is than the dark outdoors (three times that, as the
+// night makes the eye see more of it), in the room's lamp color made
+// bolder (nightRoomColors), reaching half as far and thrown straight out
+// (beam 4: half as strong 33 degrees aside): the room's light falls in
+// lanes out of its windows and doors onto the ground outside.
+// A room's color at night, per sector: its lamps' color (the lights already
+// in sources sitting in it, by strength; white with none), saturated 2.5
+// times as much and scaled to a peak of 1. Not its flats: E1M1's blue
+// carpet threw blue light out of the FLAT14 room.
+static std::vector<std::array<float,3>> nightRoomColors(const std::vector<BakeLight> &sources) {
+    std::vector<std::array<float,3>> lamp(numsectors,{0,0,0});
+    for(const BakeLight &light:sources) {
+        int s=int(R_PointInSubsector((fixed_t)(light.x*FRACUNIT),(fixed_t)(light.y*FRACUNIT))->sector-sectors);
+        for(int c=0;c<3;++c)lamp[s][c]+=light.color[c]*light.strength;
+    }
+    std::vector<std::array<float,3>> colors(numsectors);
+    for(int i=0;i<numsectors;++i) {
+        float lit=std::max({lamp[i][0],lamp[i][1],lamp[i][2]});
+        std::array<float,3> color;
+        for(int c=0;c<3;++c)color[c]=lit>0?lamp[i][c]/lit:1.0f;
+        float grey=0.299f*color[0]+0.587f*color[1]+0.114f*color[2];
+        for(float &c:color)c=std::max(0.0f,grey+(c-grey)*2.5f);
+        float peak=std::max({color[0],color[1],color[2]});
+        for(float &c:color)c=peak>0?c/peak:1.0f;
+        colors[i]=color;
+    }
+    return colors;
+}
 static void addWindowLights(std::vector<BakeLight> &sources) {
     bool sunny=settings.sun&&sunBaked&&sunLevel>0&&!contactCells.empty()&&!seamCells.empty();
+    const game_mood &mood=levelMood();
     std::array<float,3> tint=skyColor();
     for(float &c:tint)c=0.5f+0.5f*c;
     float peak=std::max({tint[0],tint[1],tint[2]});
     for(float &c:tint)c/=peak;
-    struct Window { float x,y,nx,ny,low,height,strength,sunlit;int rows; };
+    std::vector<std::array<float,3>> roomColors;
+    if(mood.shineOut)roomColors=nightRoomColors(sources);
+    struct Window { float x,y,nx,ny,low,height,strength,sunlit;int rows;std::array<float,3> color; };
     std::vector<Window> windows;
     for(int i=0;i<numlines;++i) {
         const line_t &line=lines[i];
@@ -332,27 +412,37 @@ static void addWindowLights(std::vector<BakeLight> &sources) {
         float nx=in==line.frontsector?dy:-dy,ny=in==line.frontsector?-dx:dx;
         int columns=std::max(1,(int)std::lround(length/32)),rows=std::max(1,(int)std::ceil((high-low)/64));
         float width=length/columns,height=(high-low)/rows;
-        float level=std::clamp(out->lightlevel/255.0f,0.12f,1.0f);
+        float outdoor=std::clamp(out->lightlevel/255.0f*mood.outdoor,0.12f,1.0f),level=outdoor;
+        std::array<float,3> color=tint;
+        if(mood.shineOut) {
+            // A window frame often has the outdoor level; it shines as its room.
+            float room=nightFrameLevel(in,in->lightlevel)/255.0f;
+            color=roomColors[nightRoom(in)-sectors];
+            level=(std::clamp(room,0.12f,1.0f)-outdoor)*3;
+            if(level<0.08f)continue; // A room no brighter than the night outside.
+            nx=-nx;ny=-ny;
+        }
         float strength=1.6f*settings.windowStrength*level*width/128*height/96;
         int outside=int(out-sectors);
         for(int column=0;column<columns;++column) {
             float along=(column+0.5f)*width,px=ax+dx*along,py=ay+dy*along;
             // How sunlit the ground just outside is (0-1; -1 unknown).
             float seen=0,count=0;
-            if(sunny)for(float reach:{16.0f,40.0f,80.0f}) {
+            if(sunny&&!mood.shineOut)for(float reach:{16.0f,40.0f,80.0f}) {
                 int cx=(int)std::floor((px-nx*reach-mapOrigin[0])/mapCell),cy=(int)std::floor((py-ny*reach-mapOrigin[1])/mapCell);
                 if(cx<0||cy<0||cx>=mapWidth||cy>=mapHeight)continue;
                 size_t cell=(size_t)cy*mapWidth+cx;
                 if(seamCells[cell].own!=outside)continue;
                 seen+=contactCells[4*cell+2]/255.0f;++count;
             }
-            windows.push_back({px,py,nx,ny,low,height,strength,count>0?seen/count:-1,rows});
+            windows.push_back({px,py,nx,ny,low,height,strength,count>0?seen/count:-1,rows,color});
         }
     }
     // A window onto a sunny courtyard takes over the room from those onto
     // shade: each column against the sunniest within its reach, 0.35 for
     // full shade beside full sun. Where all are alike (all shaded, or no sun)
     // they keep their strength, so a room's light still leans on its windows.
+    int shining=0;
     for(const Window &w:windows) {
         float sunlit=1;
         if(w.sunlit>=0) {
@@ -361,10 +451,12 @@ static void addWindowLights(std::vector<BakeLight> &sources) {
                 if(o.sunlit>best&&(o.x-w.x)*(o.x-w.x)+(o.y-w.y)*(o.y-w.y)<448.0f*448)best=o.sunlit;
             if(best>0.05f)sunlit=0.35f+0.65f*w.sunlit/best;
         }
+        if(mood.shineOut)++shining;
         for(int row=0;row<w.rows;++row)
-            sources.push_back({w.x+w.nx*2,w.y+w.ny*2,w.low+(row+0.5f)*w.height,448,w.strength*sunlit,0.5f,
-                               {tint[0],tint[1],tint[2]},w.height*0.5f,w.nx,w.ny});
+            sources.push_back({w.x+w.nx*2,w.y+w.ny*2,w.low+(row+0.5f)*w.height,mood.shineOut?224.0f:448.0f,w.strength*sunlit,0.5f,
+                               {w.color[0],w.color[1],w.color[2]},w.height*0.5f,w.nx,w.ny,mood.shineOut?4.0f:0.0f});
     }
+    if(mood.shineOut)fprintf(stderr,"3D bake: %d window columns shine out into the night.\n",shining);
 }
 // A merged surface light as the bake keeps it.
 static BakeLight surfaceSource(const SurfaceLight &light) {
@@ -465,6 +557,7 @@ void bakeLights() {
         merged=mergedSurfaceLights(points);
     }
     assignLampGroups(merged); // Before decorations take the groups left.
+    findGlassWindows();
     for(int i=0;i<numsectors;++i)for(mobj_t *thing=sectors[i].thinglist;thing;thing=thing->snext)
         if(decorationLight(*thing)) {sources.push_back(decorationSource(*thing));sourceGroups.push_back((uint8_t)flickerGroup(*thing));}
     for(const auto &light:merged) {

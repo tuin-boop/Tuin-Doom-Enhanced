@@ -73,8 +73,9 @@ jobs:
           -DDOOM_RELEASE_VERSION="$DOOM_RELEASE_VERSION" -DDOOM_GAME_DATA="$FREEDOOM_WAD"
           ${{ matrix.configure }}
 
+      # derp-heretic too: the launcher hands Heretic WADs to it, beside the game.
       - name: Build
-        run: cmake --build build/release --config Release --parallel --target doom
+        run: cmake --build build/release --config Release --parallel 4 --target doom derp-heretic
 
       - name: Package Windows or Linux
         if: matrix.platform != 'mac'
@@ -82,9 +83,9 @@ jobs:
           sh scripts/package-release.sh ${{ matrix.platform }} build/release freedoom dist
           cd dist
           if [ ${{ matrix.platform }} = windows ]; then
-            7z a -tzip DuctTapeDOOM-windows.zip DuctTapeDOOM-windows
+            7z a -tzip DERP-windows.zip DERP-windows
           else
-            tar czf DuctTapeDOOM-linux.tar.gz DuctTapeDOOM-linux
+            tar czf DERP-linux.tar.gz DERP-linux
           fi
 
       # The complete corresponding source: this commit plus the SDL and Nuked
@@ -93,7 +94,7 @@ jobs:
         if: matrix.platform == 'linux'
         run: |
           sh scripts/package-source.sh build/release dist
-          tar czf dist/DuctTapeDOOM-source.tar.gz -C dist DuctTapeDOOM-source
+          tar czf dist/DERP-source.tar.gz -C dist DERP-source
 
       - name: Package, sign and notarize the Mac app
         if: matrix.platform == 'mac'
@@ -118,6 +119,8 @@ jobs:
             rm "$RUNNER_TEMP/certificate.p12"
             security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain"
             security list-keychains -d user -s "$keychain" login.keychain
+            codesign --force --options runtime --timestamp --sign "Developer ID Application" \
+              "$app/Contents/MacOS/derp-heretic"
             codesign --force --options runtime --timestamp --sign "Developer ID Application" "$app"
             ditto -c -k --keepParent "$app" notarize.zip
             result=$(xcrun notarytool submit notarize.zip --apple-id "$APPLE_ID" \
@@ -134,11 +137,11 @@ jobs:
           else
             echo "No signing secrets set; the Mac app is signed ad hoc and not notarized."
           fi
-          ditto -c -k --keepParent "$app" dist/DuctTapeDOOM-mac.zip
+          ditto -c -k --keepParent "$app" dist/DERP-mac.zip
 
       - uses: actions/upload-artifact@v4
         with:
-          name: DuctTapeDOOM-${{ matrix.platform }}
+          name: DERP-${{ matrix.platform }}
           path: |
             dist/*.zip
             dist/*.tar.gz
@@ -177,4 +180,4 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: >
           gh release create "$GITHUB_REF_NAME" dist/* --prerelease
-          --title "Duct-Tape DOOM $GITHUB_REF_NAME" --notes-file release-notes.md
+          --title "DERP $GITHUB_REF_NAME" --notes-file release-notes.md

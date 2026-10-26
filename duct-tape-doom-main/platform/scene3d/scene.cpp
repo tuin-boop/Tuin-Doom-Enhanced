@@ -8,17 +8,20 @@
 #include "toasty.h"
 #include "../mod_soundbank.h"
 extern "C" int p_fluidfastpistol;
+extern "C" int sv_chain_collapses,sv_hanging_fragments,sv_collapse_size;
 extern "C" int p_player_surface_damage,p_monster_surface_damage,p_breakablewalls,p_throughwalls,p_breachdoors,p_wall_damage,p_deeperdig;
 extern "C" {
 #include "p_fluid.h"
 void I_SetFluidSoundAddon(int enabled);
 void I_SetNearMissSounds(int enabled);
+void I_SetAtmosphereExtras(int hidden,int adjacent);
 }
 extern "C" {
 extern int r_modernhud;
 #include "../audio/sound_options.h"
 #include "../../linuxdoom-1.10/p_local.h"
 }
+#include "../settings_panel.h"
 
 namespace doom3d {
 Profile profile;
@@ -30,7 +33,7 @@ std::vector<LightBlocker> lightBlockers;
 std::unordered_map<int,Image> images;
 std::map<const std::vector<Vertex>*,std::vector<VertexSection>> vertexSections;
 std::map<int,std::vector<Vertex>> batches,shadowBatches,decalBatches,effectBatches,effectAddBatches,mirrorBatches;
-std::vector<Vertex> mistVertices,particleVertices,heatVertices,skyVertices,shaftVertices;
+std::vector<Vertex> mistVertices,particleVertices,crestVertices,heatVertices,skyVertices,shaftVertices;
 GpuTextureRef seamTexture,contactTexture,cloudTexture,wallBakeTexture,flatLightTexture,causticTexture,causticPattern,shoreTexture;
 GpuTextureRef wallDirectionTexture,flatDirectionTexture;
 float reflectionPlane=0;
@@ -58,8 +61,23 @@ void interpolatedPosition(const mobj_t &thing,float fraction,float &x,float &y,f
         z=old->second[2]+(z-old->second[2])*fraction;
     }
 }
+// -renderview x y angle [pitch] (map units, degrees; pitch up, needs free
+// look) puts the player there once per level, to aim -rendercheck frames.
+extern "C" boolean P_TeleportMove(mobj_t *thing,fixed_t x,fixed_t y);
+static void renderViewPlace(player_t &player) {
+    static unsigned placed=~0u;
+    int view=M_CheckParm((char*)"-renderview");
+    if(!view||view+3>=myargc||placed==r_levelserial)return;
+    placed=r_levelserial;
+    mobj_t *mo=player.mo;
+    P_TeleportMove(mo,(fixed_t)(atof(myargv[view+1])*FRACUNIT),(fixed_t)(atof(myargv[view+2])*FRACUNIT));
+    mo->z=mo->floorz;mo->angle=(angle_t)(int64_t)(atof(myargv[view+3])/360.0*4294967296.0);
+    player.viewz=mo->z+player.viewheight;
+    if(view+4<myargc&&myargv[view+4][0]!='-')pitch=std::clamp((float)atof(myargv[view+4])*(float)doomPi/180,-1.2f,1.2f);
+}
 static void beforeTic() {
     if(gamestate!=GS_LEVEL||!players[displayplayer].mo||paused) {tickTime=0;return;}
+    renderViewPlace(players[displayplayer]);
     mobj_t *mo=players[displayplayer].mo;
     snapshotWeaponPositions();
     oldEye[0]=units(mo->x);oldEye[1]=units(mo->y);oldEye[2]=units(players[displayplayer].viewz);
@@ -70,10 +88,16 @@ static void beforeTic() {
     for(int i=0;i<numsectors;++i) for(mobj_t *thing=sectors[i].thinglist;thing;thing=thing->snext)
         {oldThings.emplace(thing,std::array<float,3>{units(thing->x),units(thing->y),units(thing->z)});fluidProjectileFlight(*thing);}
     tickImpactParticles();
+    tickEnvironment();
     tickFluidEffects();
     watchBodies();
     watchSplashes();
+    ragdollTestTic();
+    watchBodies();
+    watchSpray();
     watchGlass();
+    watchWeather();
+    watchWear();
     watchShotLights();
 }
 static void acceleratedView(player_t *player) {
@@ -85,6 +109,7 @@ static void acceleratedView(player_t *player) {
     }
 }
 void applySettings() {
+    fitGame(settings);
     p_breakablewalls=settings.breakableWalls;
     p_throughwalls=settings.throughWalls;
     p_breachdoors=settings.breachDoors;
@@ -92,6 +117,7 @@ void applySettings() {
     p_monster_surface_damage=settings.monsterSurfaceDamage;
     p_player_surface_damage=settings.playerSurfaceDamage;
     p_wall_damage=std::clamp(settings.wallDamage,100,500);
+    sv_chain_collapses=settings.chainCollapses;sv_hanging_fragments=settings.hangingFragments;sv_collapse_size=settings.collapseSize;
     if(p_fluidweapons!=settings.fluidWeapons||p_fluidmonsters!=settings.fluidMonsters) {
         P_FluidReset();resetWeaponPositions();
     }
@@ -123,18 +149,28 @@ void applySettings() {
     R_WallImpact=settings.accelerated?wallImpact:nullptr;
     R_DamageHit=settings.accelerated?bodyDamaged:nullptr;
     R_BloodHit=settings.accelerated?bloodHit:nullptr;
+    R_DamageHit=settings.accelerated?bodyDamaged:nullptr;
     R_PlaneImpact=settings.accelerated?planeImpact:nullptr;
     R_ShotPassed=settings.accelerated?glassShot:nullptr;
     freeaim=settings.accelerated&&settings.look;
+    classicaim=settings.classicAim!=0;
+    quickconfirm=settings.quickConfirm!=0;
     if(!settings.accelerated) clearFlashPulses();
     r_uncapped=settings.accelerated;
     if(!settings.look) pitch=0;
     R_SetViewSize(10,0);
-    I_SetSoundOptions(settings.roomAcoustics,settings.reverbAmount,settings.muffleWalls,settings.muffleDistance);
+    I_SetSoundOptions(settings.roomAcoustics,settings.reverbAmount,settings.muffleWalls,settings.muffleDistance,settings.naturalFalloff);
     I_SetSfxPlayback(settings.sfxResampling,settings.sfxTreble);
     I_SetMadeSounds(settings.madeImpacts,settings.glassSound,settings.ambience,settings.ambienceAmount,settings.footsteps);
+    I_SetAlternativeComputerSounds(settings.alternativeComputerSounds);
+    I_SetAtmosphereExtras(settings.hiddenMachinery,settings.adjacentReverb);
     I_AmbienceShowGlass(settings.accelerated&&settings.windowGlass);
     I_SetMusicDevice(settings.musicDevice);
+    // The authored episode's mood is baked into the sun, lamps, bounce and
+    // sky light (levelMood): switching it re-bakes them all.
+    static int bakedAuthored=-1;
+    if(bakedAuthored>=0&&bakedAuthored!=settings.authored) {sunBaked=false;lightBakeKey=-1;bounceKey=-1;ambientKey=-1;flowKey=-1;}
+    bakedAuthored=settings.authored;
 }
 void sceneInit(SDL_Window *window) {
     gameWindow=window;
@@ -143,7 +179,7 @@ void sceneInit(SDL_Window *window) {
     loadSettings();if(M_CheckParm((char*)"-classic"))settings.accelerated=0;
     if(M_CheckParm((char*)"-rendercheck"))settings.accelerated=1;
     int fov=M_CheckParm((char*)"-fov");if(fov&&fov+1<myargc)settings.fov=std::clamp((float)atof(myargv[fov+1]),60.0f,120.0f);
-    flashlightOn=M_CheckParm((char*)"-flashlight")!=0;
+    flashlightOn=M_CheckParm((char*)"-flashlight")!=0&&Game_HasEffect(GAME_EFFECT_FLASHLIGHT);
     int tintOption=M_CheckParm((char*)"-flashlighttint");
     if(tintOption&&tintOption+1<myargc)
         settings.flashlightTintGain=std::clamp((float)atof(myargv[tintOption+1]),0.0f,2.0f);
@@ -153,15 +189,16 @@ void sceneInit(SDL_Window *window) {
     if(paletteOption&&paletteOption+1<myargc)settings.palette=atoi(myargv[paletteOption+1])!=0;
 }
 void sceneShutdown() {
-    toastyTexture.reset();toastyVisible=0;
+    toastyTexture.reset();toastyVisible=0;romeroTexture.reset();romeroAge=-1;
     stopRelight();
     R_AcceleratedView=nullptr;R_BeforeTic=nullptr;R_MuzzleFlash=nullptr;R_WallImpact=nullptr;R_RocketImpact=nullptr;R_BFGHit=nullptr;R_DoorMotion=nullptr;R_DoorDamage=nullptr;R_CraterCrumble=nullptr;R_SurfaceChip=nullptr;R_SolidBulletImpact=nullptr;R_RubbleImpact=nullptr;R_DamageHit=nullptr;R_BloodHit=nullptr;R_PlaneImpact=nullptr;R_ShotPassed=nullptr;r_uncapped=0;v_overlayactive=0;
     lightBlockers.clear();flashes={};oldThings.clear();oldHeights.clear();
     vertexSections.clear();batches.clear();shadowBatches.clear();decalBatches.clear();effectBatches.clear();effectAddBatches.clear();mirrorBatches.clear();particleVertices.clear();
     mistVertices.clear();skyVertices.clear();shaftVertices.clear();heatVertices.clear();
-    imagesShutdown();mapShutdown();causticsShutdown();clearSurfaceLights();lightsShutdown();exposureShutdown();
+    imagesShutdown();mapShutdown();causticsShutdown();clearSurfaceLights();lightsShutdown();glassLightShutdown();exposureShutdown();
     bakeAtlasShutdown();sunShutdown();lightBakeShutdown();clearStaticGrid();indirectShutdown();
     rubbleEmissionVertices.clear();bodyMotionShutdown();impactsShutdown();bloodShutdown();splashesShutdown();glassShutdown();shotLightsShutdown();
+    weatherShutdown();wearShutdown();
 }
 // A new level, or the first after shutdown: each part forgets the last
 // level, then the map and what is built from it at level load.
@@ -180,6 +217,8 @@ static void startLevel() {
     layoutBake();
     measureEmissionDensity();
     findDoors();
+    prepareFalls();
+    prepareRagdolls();
     levelSerial=r_levelserial;
 }
 static bool levelPending() {return levelSerial!=r_levelserial||floors.empty();}
@@ -200,6 +239,37 @@ static void planStages(bool level) {
     planLoading(LoadStage::Ambient,(settings.skyLight||settings.bakedAO)&&(level||ambientKey!=bakeThingsKey));
     planLoading(LoadStage::Flow,settings.lightFlow&&(level||flowKey!=flowInputs()));
 }
+// What frameMean's alpha tells surfaceLight about a texture's material:
+// 0 DOOM's palette ramps (3, stone, for Game_MatteTexture), 1 ice
+// (iceFlat); with Game_SurfaceGloss, 2 a sprite (judged by colour alone),
+// else 3 + its game_surface; fabric (9) takes materialGloss's matte
+// default. Worn plates (wornPlate) add 16.
+static_assert(GAME_SURFACE_STONE==0&&GAME_SURFACE_METAL==1&&GAME_SURFACE_WOOD==2&&GAME_SURFACE_FLESH==3&&GAME_SURFACE_SOIL==4&&GAME_SURFACE_LIQUID==5&&GAME_SURFACE_FABRIC==6,
+              "materialGloss in world/surface.glsl numbers the surfaces");
+static float surfaceMaterial(int key,int pic,bool flat) {
+    if(flat&&iceFlat(pic))return 1;
+    static std::unordered_map<int,float> known;
+    auto found=known.find(key);
+    if(found!=known.end())return found->second;
+    char name[9]={};
+    if(key>=0)R_TextureName(key,name);
+    else if(flat)memcpy(name,lumpinfo[firstflat+pic].name,8);
+    float material=2;
+    if(!Game_SurfaceGloss())material=name[0]&&Game_MatteTexture(name,flat)?3+(float)GAME_SURFACE_STONE:0;
+    else if(key>=0)material=3+(float)Game_WallSurface(name);
+    else if(flat)material=3+(float)Game_FlatSurface(name);
+    return known[key]=material;
+}
+// Plain metal plates that use has worn (Game_WornPlate; world/wear.glsl plateGrime).
+static bool wornPlate(int key,int pic,bool flat) {
+    static std::unordered_map<int,bool> known;
+    auto found=known.find(key);
+    if(found!=known.end())return found->second;
+    char name[9]={};
+    if(key>=0)R_TextureName(key,name);
+    else if(flat)memcpy(name,lumpinfo[firstflat+pic].name,8);
+    return known[key]=name[0]&&Game_WornPlate(name,flat);
+}
 // Binds a batch texture with its next animation frame and crossfade amount.
 // The engine switches frames before leveltime++, so the phase uses leveltime-1.
 SurfaceBinding surfaceBinding(int key) {
@@ -217,32 +287,36 @@ SurfaceBinding surfaceBinding(int key) {
         }
     }
     SurfaceBinding binding={&image,next,blend};
-    // Cache cycle means once per level, not per draw or animation frame.
+    binding.frameMean[3]=surfaceMaterial(key,pic,flat)+(settings.wornPlates&&wornPlate(key,pic,flat)?16:0);
+    float floor=flat?liquidDetailFloor(pic):0;
     static unsigned meanLevel=~0u;
-    static std::unordered_map<int,std::array<float,4>> means;
+    static std::unordered_map<int,std::array<float,3>> means;
     if(meanLevel!=r_levelserial){means.clear();meanLevel=r_levelserial;}
-    if(flat&&speed>0) {
-        const char *name=lumpinfo[firstflat+pic].name;
-        bool liquid=!strncmp(name,"FWATER",6)||!strncmp(name,"NUKAGE",6)||!strncmp(name,"SLIME",5)||!strncmp(name,"LAVA",4)||!strncmp(name,"BLOOD",5);
-        if(liquid) {
-            auto found=means.find(pic);
-            if(found==means.end()) {
-                std::vector<int> frames;std::array<float,4> mean={};int at=pic;
-                for(int n=0;n<64;++n) {
-                    if(std::find(frames.begin(),frames.end(),at)!=frames.end())break;
-                    frames.push_back(at);const auto &rgb=averageColor(lumpImage(firstflat+at,true));
-                    for(int c=0;c<3;++c)mean[c]+=rgb[c];
-                    int following;if(P_PicAnimationNext(false,at,&following)<=0)break;at=following;
-                }
-                for(int c=0;c<3;++c)mean[c]/=frames.size();
-                mean[3]=.35f;
-                for(int frame:frames)means[frame]=mean;
-                found=means.find(pic);
+    if(floor>0) {
+        // The frames' average at the crossfade, and the average over the
+        // whole cycle, which stays put as the frames change.
+        const auto &a=averageColor(image),&b=averageColor(const_cast<Image&>(*next));
+        auto found=means.find(pic);
+        if(found==means.end()) {
+            std::array<float,3> cycle={};std::vector<int> frames;
+            for(int at=pic,n=0;n<64;++n) {
+                if(std::find(frames.begin(),frames.end(),at)!=frames.end())break;
+                frames.push_back(at);
+                const auto &mean=averageColor(lumpImage(firstflat+at,true));
+                for(int c=0;c<3;++c)cycle[c]+=mean[c];
+                int following;
+                if(P_PicAnimationNext(false,at,&following)<=0)break;
+                at=following;
             }
-            binding.liquidCycle=found->second;
-            const auto &a=averageColor(image),&b=averageColor(const_cast<Image&>(*next));
-            for(int c=0;c<3;++c)binding.liquidFrame[c]=a[c]+(b[c]-a[c])*blend;
+            for(float &c:cycle)c/=frames.size();
+            for(int frame:frames)means[frame]=cycle;
+            found=means.find(pic);
         }
+        for(int c=0;c<3;++c) {
+            binding.frameMean[c]=a[c]+(b[c]-a[c])*blend;
+            binding.cycleMean[c]=found->second[c];
+        }
+        binding.cycleMean[3]=floor;
     }
     return binding;
 }
@@ -276,9 +350,12 @@ FrameView prepareFrame(int w,int h) {
     static unsigned profileSerial;
     if(profile.enabled) {profile.frame=I_Render3DFrameProfile{};profile.frame.serial=++profileSerial;pitch=0;}
     camera.projection[2]=1;camera.projection[3]=32768;
+    camera.style[0]=settings.ps2Style&&worldPending;
     camera.effects[0]=settings.filter;camera.effects[1]=settings.retro;
     camera.texFilter[0]=settings.sharpSoftness;camera.texFilter[1]=settings.paletteMips&&settings.filter;
-    camera.effects[2]=players[displayplayer].fixedcolormap;
+    // A carried torch's colormap (Game_Torch) becomes real light (lights.cpp).
+    float torchFlame;
+    camera.effects[2]=Game_Torch(&torchFlame)?0:players[displayplayer].fixedcolormap;
     camera.effects[3]=settings.spriteFilter;camera.materials[0]=settings.emissive;
     unsigned features=(settings.detail?FEATURE_SURFACE_DETAIL:0)|(settings.retroReflections?FEATURE_RETRO_REFLECTIONS:0)|
         (settings.caustics&&causticTexture?FEATURE_CAUSTICS:0)|(settings.texelLight?FEATURE_TEXEL_BAKE:0)|
@@ -292,7 +369,9 @@ FrameView prepareFrame(int w,int h) {
         (settings.detail&&settings.variedHighlights?FEATURE_VARIED_HIGHLIGHTS:0)|
         (settings.windowLight&&bakedLightsActive?FEATURE_WINDOW_LIGHT:0)|
         (settings.detail&&settings.unevenTiles?FEATURE_UNEVEN_TILES:0)|(settings.detail&&settings.unevenWalls?FEATURE_UNEVEN_WALLS:0)|
-        (settings.classicFlashlight?FEATURE_CLASSIC_FLASHLIGHT:0)|(settings.stippledShadows?FEATURE_STIPPLED_SHADOWS:0)|(settings.glowEdges&&shoreTexture&&causticPattern?FEATURE_GLOW_EDGES:0);
+        (settings.classicFlashlight?FEATURE_CLASSIC_FLASHLIGHT:0)|(settings.stippledShadows?FEATURE_STIPPLED_SHADOWS:0)|
+        (settings.glowEdges&&shoreTexture&&causticPattern?FEATURE_GLOW_EDGES:0)|
+        (settings.windowStreaks?FEATURE_WINDOW_STREAKS:0)|(settings.liveReadouts?FEATURE_LIVE_READOUTS:0);
     camera.flashlightTint[3]=(float)features; // see shaders/feature_flags.h
     camera.map[0]=mapOrigin[0];camera.map[1]=mapOrigin[1];camera.map[2]=1/mapCell;
     camera.map[3]=settings.softLight&&seamTexture&&worldPending;
@@ -302,6 +381,10 @@ FrameView prepareFrame(int w,int h) {
     // through the dimmed backdrop and soften the panel's text.
     camera.materials[1]=settings.emissive&&worldPending&&camera.effects[2]==0&&!I_Render3DSettingsOpen();
     camera.fx[0]=1;
+    camera.eye[3]=Game_WaterClarity();
+    // The episode's mood: a dark outdoors dims its sky, a little less than the ground.
+    camera.mood[0]=worldPending?1+(levelMood().outdoor-1)*0.85f:1;
+    for(int c=0;c<3;++c)camera.mood[1+c]=worldPending?levelMood().skyTint[c]:1; // Its sky's tint.
     float uiWidth=std::min((float)w,h*4.0f/3),uiHeight=uiWidth*0.75f,uiX=(w-uiWidth)/2;
     float uiY=worldPending&&settings.widescreen?h-uiHeight:(h-uiHeight)/2;
     float worldX=uiX+uiWidth*viewwindowx/320,worldY=uiY+uiHeight*viewwindowy/200.0f;
@@ -325,6 +408,9 @@ FrameView prepareFrame(int w,int h) {
         for(int c=0;c<3;++c)camera.sun[c]=sun?sunTint[c]:0;
         camera.sun[3]=sun?sunLevel:0;
         camera.fx2[2]=sunYaw;camera.fx2[3]=sun&&settings.sunDisc?sunGlow:0;
+        // outdoor: shade, sun gain, sky color share, the sun disc's height (Game_Sun).
+        game_sun game;Game_Sun(&game);
+        camera.outdoor[0]=sunShade;camera.outdoor[1]=sunGain;camera.outdoor[2]=game.skyCast;camera.outdoor[3]=sunDiscElevation;
         bakedLightsActive=settings.bakedLights&&lightBakeKey==lightBakeInputs();
         bakeOnlyActive=bakedLightsActive&&(lightBakeKey&2);
         // bake.z: 1 bake-only lights (directions and flicker groups), -1
@@ -359,7 +445,10 @@ FrameView prepareFrame(int w,int h) {
                 yaw=oldYaw+std::remainder(yaw-oldYaw,2*doomPi)*fraction;
             }
         }
-        float look=demoplayback?0:pitch;
+        // A game with its own look (Heretic) sets the pitch, demos included;
+        // mouselook turns that look (I_Render3DLook) so its aiming agrees.
+        float gameLook;
+        float look=Game_LookPitch(&gameLook)?gameLook:demoplayback?0:pitch;
         tourpitch=look;freeaim=settings.look&&!demoplayback;
         camera.right[0]=sin(yaw);camera.right[1]=-cos(yaw);
         camera.forward[0]=cos(yaw)*cos(look);camera.forward[1]=sin(yaw)*cos(look);camera.forward[2]=sin(look);
@@ -367,6 +456,14 @@ FrameView prepareFrame(int w,int h) {
         camera.fog[0]=0.00045f*(player->mo->subsector->sector->ceilingpic==skyflatnum?0.35f:1.0f);
         camera.fog[1]=0.012f;camera.fog[2]=fogReferenceHeight;
         camera.fog[3]=(leveltime+fraction)/TICRATE;
+        // Weather and wear (weather.cpp, wear.cpp): where wear.glsl finds its
+        // records, how wet the windows and the ground under the sky are.
+        camera.right[3]=wearBase();
+        camera.forward[3]=settings.weather?glassWetNow:0;
+        camera.up[3]=settings.weather?wetNow:0;
+        // The far rain sky.frag draws over the sky (weather.cpp's rain stops at the map's sky).
+        camera.weather[0]=settings.weather&&camera.effects[2]==0?rainNow:0;
+        camera.weather[1]=rainWind[0];camera.weather[2]=rainWind[1];
         renderFraction=fraction;
         // Caustics follow the liquid's frame and crossfade like its floor (surfaceBinding).
         if(!causticFrames.empty()&&causticSpeed>0&&leveltime>0) {
@@ -393,13 +490,20 @@ FrameView prepareFrame(int w,int h) {
         camera.fx2[1]=settings.skyLight&&ambient?skyLevel:0;
         // The fog haze takes the sky's color too, so it follows the sky without the sky-light bake.
         static int tintedSky=-1;
-        if(skytexture!=tintedSky){skyTint=skyColor();tintedSky=skytexture;}
+        static std::array<float,3> horizon;
+        if(skytexture!=tintedSky){skyTint=skyColor();horizon=skyHorizon();tintedSky=skytexture;}
         for(int c=0;c<3;++c)camera.fx[1+c]=skyTint[c];
+        // Outdoor haze in the sky's horizon color (Game_Sun), with the fog.
+        for(int c=0;c<3;++c)camera.haze[c]=horizon[c]*camera.mood[0]*camera.mood[1+c];
+        camera.haze[3]=settings.fog?game.haze:0;
         buildMist(camera);
         buildShafts(camera);
         buildRings(camera);
         updateExposure(camera);
         updateFlashlightTint(camera);
+        // The Torch item's faint lift over the whole view, flickering with
+        // the flame; most of its light is the carried flame (lights.cpp).
+        if(torchFlame>0)for(int c=0;c<3;++c)camera.flashlightTint[c]+=0.1f*torchFlame*torchColor()[c];
         selectFogLights(camera);
         if(profile.skip&I_RENDER3D_SKIP_MIST) {mistVertices.clear();shaftVertices.clear();}
         if(profile.skip&I_RENDER3D_SKIP_FOG) {fogLights={};camera.materials[2]=0;}
@@ -431,6 +535,7 @@ std::vector<unsigned> hudPixels(const unsigned *pixels) {
     modernHud(modern);
     keyNotice(overlay);
     toastyNotice();
+    romeroNotice();
     wheelDraw(overlay);
     if(settings.fps&&worldPending&&!menuactive&&fps>0) {
         // Readable in fullscreen, independent of HUD layout and scale.
@@ -469,16 +574,55 @@ std::vector<std::array<float,4>> sectorInfo() {
     if(worldPending)for(int i=0;i<numsectors;++i)
         info[i]={lighting(&sectors[i]),floorZ(&sectors[i]),ceilZ(&sectors[i]),
             sectors[i].ceilingpic==skyflatnum?packOutdoor(&sectors[i]):0.0f};
+    if(worldPending)appendWear(info);
     return info;
 }
-bool renderCheckDue() {return M_CheckParm((char*)"-rendercheck")&&worldPending&&gametic>10;}
+// -rendercheck <png> saves the first 3D frame after tic 10 (or -rendertic N)
+// and quits; -rendersettings opens the F4 panel for that frame first.
+// -renderframes M -renderevery K: M frames K tics apart, laid out as one contact
+// sheet (-rendersheet columns, default 4) of the 3D view cropped to
+// -rendercrop x0,y0,x1,y1 (shares of the frame) and scaled by -renderscale.
+static int renderArg(const char *name,int fallback) {
+    int at=M_CheckParm((char*)name);
+    return at&&at+1<myargc?atoi(myargv[at+1]):fallback;
+}
+static int renderFramesTaken=0;
+bool renderCheckDue() {
+    int after=renderArg("-rendertic",10)+renderFramesTaken*std::max(1,renderArg("-renderevery",1));
+    bool due=M_CheckParm((char*)"-rendercheck")&&worldPending&&gametic>after;
+    if(due&&M_CheckParm((char*)"-rendersettings")&&!I_Render3DSettingsOpen()) {I_Render3DSettingsMenu();return false;}
+    return due;
+}
 void saveScreenshot(const void *bgra,int width,int height,int stride) {
     SDL_CreateDirectory("Screenshots");
-    char path[256];snprintf(path,sizeof(path),"Screenshots/DOOM-%llu.png",(unsigned long long)SDL_GetTicksNS());
+    char path[256];snprintf(path,sizeof(path),"Screenshots/%s-%llu.png",Game_Title(),(unsigned long long)SDL_GetTicksNS());
     int test=M_CheckParm((char*)"-rendercheck");
     const char *output=test&&test+1<myargc?myargv[test+1]:profile.screenshotPath?profile.screenshotPath:path;
     profile.screenshotPath=nullptr;
     SDL_Surface *surface=bgra?SDL_CreateSurfaceFrom(width,height,SDL_PIXELFORMAT_BGRA32,(void*)bgra,stride):nullptr;
+    int frames=test?renderArg("-renderframes",1):1;
+    if(frames>1&&surface) {
+        static SDL_Surface *sheet=nullptr;
+        float crop[4]={0.1f,0.2f,0.9f,0.84f},scale=0.25f;
+        int at=M_CheckParm((char*)"-rendercrop");
+        if(at&&at+1<myargc)sscanf(myargv[at+1],"%f,%f,%f,%f",&crop[0],&crop[1],&crop[2],&crop[3]);
+        at=M_CheckParm((char*)"-renderscale");
+        if(at&&at+1<myargc)scale=(float)atof(myargv[at+1]);
+        SDL_Rect from={(int)(crop[0]*width),(int)(crop[1]*height),(int)((crop[2]-crop[0])*width),(int)((crop[3]-crop[1])*height)};
+        int columns=std::max(1,renderArg("-rendersheet",4)),cw=std::max(1,(int)(from.w*scale)),ch=std::max(1,(int)(from.h*scale)),gap=4;
+        if(!sheet) {
+            int rows=(frames+columns-1)/columns;
+            sheet=SDL_CreateSurface(columns*(cw+gap)+gap,rows*(ch+gap)+gap,SDL_PIXELFORMAT_BGRA32);
+            SDL_FillSurfaceRect(sheet,nullptr,SDL_MapSurfaceRGB(sheet,24,24,28));
+        }
+        int n=renderFramesTaken++;
+        SDL_Rect to={gap+(n%columns)*(cw+gap),gap+(n/columns)*(ch+gap),cw,ch};
+        SDL_BlitSurfaceScaled(surface,&from,sheet,&to,SDL_SCALEMODE_LINEAR);
+        SDL_DestroySurface(surface);
+        fprintf(stderr,"Render frame %d of %d at tic %d.\n",n+1,frames,gametic);
+        if(renderFramesTaken<frames)return;
+        surface=sheet;
+    }
     bool saved=surface&&SDL_SavePNG(surface,output);SDL_DestroySurface(surface);
     if(!test) players[consoleplayer].message=(char*)(saved?"SCREENSHOT SAVED":"SCREENSHOT FAILED");
     fprintf(stderr,"Screenshot %s: %s (%dx%d).\n",saved?"saved":"failed",output,width,height);
@@ -494,8 +638,9 @@ void updateTitle(int width,int height,const char *renderer) {
         fps=frameCount*1e9/(now-titleTime);frameMs=1000.f/std::max(fps,1.f);peakFrameMs=framePeak;framePeak=0;
         frameCount=0;titleTime=now;
         char rate[32]="";if(settings.fps)snprintf(rate,sizeof(rate)," · %.0f fps",fps);
-        char title[256];snprintf(title,sizeof(title),"DOOM · %s · %dx%d%s · F: flashlight · F4: graphics · F7: screenshot · Esc: menu",
-            settings.accelerated?renderer:"Classic",width,height,rate);
+        char title[256];snprintf(title,sizeof(title),"%s · %s · %dx%d%s%s · F4: graphics · F7: screenshot · Esc: menu",
+            Game_Title(),settings.accelerated?renderer:"Classic",width,height,rate,
+            Game_HasEffect(GAME_EFFECT_FLASHLIGHT)?" · F: flashlight":"");
         SDL_SetWindowTitle(gameWindow,title);
     }
 }
@@ -562,8 +707,14 @@ void I_Render3DWheelMove(float x,float y){if(!wheelActive)return;wheelX+=x*.35f;
 int I_Render3DIsAccelerated(void) {return settings.accelerated;}
 int I_Render3DModernHUD(void) {return settings.accelerated&&settings.hudStyle!=0;}
 void I_Render3DFullscreenChanged(int enabled) {settings.fullscreen=enabled!=0;}
-void I_Render3DLook(float delta) {if(settings.look&&settings.accelerated&&!demoplayback)pitch=std::clamp(pitch-delta*0.002f,P_UseUZMovement()?-1.55334f:-1.2f,P_UseUZMovement()?1.55334f:1.2f);}
-void I_Render3DToggleFlashlight(void) {if(settings.accelerated)flashlightOn=!flashlightOn;}
+void I_Render3DLook(float delta) {
+    if(!settings.look||!settings.accelerated||demoplayback)return;
+    if(settings.invertLook)delta=-delta;
+    float gameLook;
+    if(Game_LookPitch(&gameLook))Game_Look(-delta*0.002f);
+    else pitch=std::clamp(pitch-delta*0.002f,P_UseUZMovement()?-1.55334f:-1.2f,P_UseUZMovement()?1.55334f:1.2f);
+}
+void I_Render3DToggleFlashlight(void) {if(settings.accelerated&&Game_HasEffect(GAME_EFFECT_FLASHLIGHT))flashlightOn=!flashlightOn;}
 void I_Render3DScreenshot(void) {screenshotPending=true;}
 const I_Render3DFrameProfile *I_Render3DLastFrame(void) {return &profile.frame;}
 void I_Render3DProfileTeleported(void) {surfaceSelection.clear();surfaceLightTime=0;}
@@ -629,7 +780,7 @@ extern "C" void I_TestEffectsPreview(int t){
         }
     }
     if(t==35)for(mobj_t *a:actors){
-        bloodHit(a,a->x,a->y,a->z+32*FRACUNIT,(fixed_t)(dx*FRACUNIT),(fixed_t)(dy*FRACUNIT),5,0,p);
+        bloodHit(a,p,a->x,a->y,a->z+32*FRACUNIT,(fixed_t)(dx*FRACUNIT),(fixed_t)(dy*FRACUNIT),0,5);
         P_DamageMobj(a,p,p,5);a->target=nullptr;a->momx=a->momy=0;
     }
     if(t==55)for(int i=1;i<3;++i){P_DamageMobj(actors[i],p,p,actors[i]->health+1);actors[i]->momx=actors[i]->momy=0;}
@@ -637,4 +788,27 @@ extern "C" void I_TestEffectsPreview(int t){
         static char path[1024];snprintf(path,sizeof(path),"%s/effects-%d.png",getenv("DOOM_EFFECTS_OUT"),t);I_Render3DScreenshotTo(path);
     }
     if(t>=80)I_Quit();
+}
+
+extern "C" void I_TestPS2Style(int enabled) {
+    using namespace doom3d;
+    Settings probe{};
+    if(probe.ps2Style)I_Error("PS2 style must default off");
+    readOption(probe,"ps2_style",1);
+    if(!probe.ps2Style)I_Error("PS2 style config did not enable");
+    readOption(probe,"ps2_style",0);
+    if(probe.ps2Style)I_Error("PS2 style config did not disable");
+    int found=0;
+    for(auto &tab:optionTabs(probe))for(auto &section:tab.sections)for(auto &o:section.options)
+        if(!strcmp(o.key,"ps2_style")) {
+            ++found;probe.accelerated=0;
+            if(o.isEnabled(probe))I_Error("PS2 style enabled for software renderer");
+            probe.accelerated=1;
+            if(!o.isEnabled(probe))I_Error("PS2 style unavailable for GPU renderer");
+        }
+    if(found!=1)I_Error("Missing or duplicate PS2 option");
+    int filter=settings.filter,retro=settings.retro,palette=settings.palette;
+    readOption(settings,"ps2_style",enabled);
+    if(settings.filter!=filter||settings.retro!=retro||settings.palette!=palette)I_Error("PS2 style changed other preferences");
+    printf("PASS PS2 style config, defaults, dependency and independent toggle %d\n",enabled);
 }

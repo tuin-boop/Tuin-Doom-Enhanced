@@ -2,7 +2,6 @@
    see each other. */
 #include "internal.h"
 extern "C" {
-#include "light_swings.h"
 }
 
 namespace doom3d {
@@ -161,17 +160,39 @@ std::vector<SurfaceLight> mergedSurfaceLights(std::vector<SurfaceLight> tiles) {
 // count at their peak (their light thinker's maxlight), read once per level
 // with the low they drop to, so a save loaded mid-flicker lights like a
 // fresh start.
-struct LampRange { int low,peak; bool flickers,smooth; };
+struct LampRange { int low,peak; bool flickers,smooth,lamps; };
 static std::vector<LampRange> lampRanges;
+// A glowing texture other than a screen: a lamp the sector's swing is for.
+static bool isLamp(const Image &image) {return image.emissionWeight>0&&image.screens.empty();}
+// Whether a flickering sector shows a lamp texture: on its floor or
+// ceiling, or on the wall sections of its sides as the map starts.
+static void findLamps() {
+    for(int i=0;i<numsectors;++i)for(int ceiling=0;ceiling<2;++ceiling) {
+        int flat=ceiling?sectors[i].ceilingpic:sectors[i].floorpic;
+        if(lampRanges[i].flickers&&flat!=skyflatnum&&isLamp(lumpImage(firstflat+flattranslation[flat],true)))lampRanges[i].lamps=true;
+    }
+    for(int i=0;i<numlines;++i)for(int side=0;side<2;++side) {
+        if(lines[i].sidenum[side]<0)continue;
+        const side_t &s=sides[lines[i].sidenum[side]];
+        int index=int(s.sector-sectors);
+        if(!lampRanges[index].flickers||lampRanges[index].lamps)continue;
+        const sector_t *back=lines[i].sidenum[side^1]>=0?sides[lines[i].sidenum[side^1]].sector:nullptr;
+        int shown[3]={s.midtexture,
+                      back&&back->ceilingheight<s.sector->ceilingheight?s.toptexture:0,
+                      back&&back->floorheight>s.sector->floorheight?s.bottomtexture:0};
+        for(int tex:shown)if(tex>0&&isLamp(wallImage(texturetranslation[tex])))lampRanges[index].lamps=true;
+    }
+}
 static void readLampRanges() {
     if(lampRanges.size()==(size_t)numsectors)return;
     lampRanges.resize(numsectors);
-    for(int i=0;i<numsectors;++i)lampRanges[i]={sectors[i].lightlevel,sectors[i].lightlevel,false,false};
-    doom_light_swings([](int sector,int low,int high,int smooth,void*) {
+    for(int i=0;i<numsectors;++i)lampRanges[i]={sectors[i].lightlevel,sectors[i].lightlevel,false,false,false};
+    Game_LightSwings([](int sector,int low,int high,int smooth,void*) {
         if(sector<0||sector>=numsectors)return;
         LampRange &range=lampRanges[sector];
-        range={low,std::max(range.peak,high),true,smooth!=0};
+        range={low,std::max(range.peak,high),true,smooth!=0,false};
     },nullptr);
+    findLamps();
 }
 static std::array<float,3> emissionDensity={};
 // Count emitting texels over actual map surface area, rather than texture
@@ -225,9 +246,15 @@ static float lampLevel(int sector) {
 // with their swing instead, glow and all (lampGlow): E1M2's armor alcove
 // (sector 28) pulses. Their baked light follows by flicker group
 // (assignLampGroups), and the sector itself keeps its low (lampLightLevel).
+// The swing is the lamps' and not the room's power: screens beside them
+// stay on. A sector whose only glowing textures are screens was drawn for
+// them, so there the screens are what flickers.
 bool lampFlickers(int sector) {
     readLampRanges();
     return sector>=0&&sector<numsectors&&lampRanges[sector].flickers;
+}
+bool lampFlickers(int sector,const Image &image) {
+    return lampFlickers(sector)&&(image.screens.empty()||!lampRanges[sector].lamps);
 }
 float lampShine(int sector) {
     if(!lampFlickers(sector))return 1;
@@ -236,16 +263,16 @@ float lampShine(int sector) {
     if(range.smooth)return std::clamp((now-range.low)/(float)(range.peak-range.low),0.0f,1.0f);
     return now*2<range.low+range.peak?0.0f:1.0f;
 }
-bool lampOut(int sector) {return lampFlickers(sector)&&!lampRanges[sector].smooth&&lampShine(sector)<=0;}
+bool lampOut(int sector,const Image &image) {return lampFlickers(sector,image)&&!lampRanges[sector].smooth&&lampShine(sector)<=0;}
 int lampLightLevel(const sector_t *sector) {
     int index=int(sector-sectors);
     if(!lampGroupSector(index))return sector->lightlevel;
     return std::min<int>(sector->lightlevel,lampRanges[index].low);
 }
-void lampGlow(std::vector<Vertex> &out,size_t first,const sector_t *sector,float gain) {
+void lampGlow(std::vector<Vertex> &out,size_t first,const sector_t *sector,const Image &image) {
     int index=int(sector-sectors);
-    float shine=gain;
-    if(lampFlickers(index)&&lampRanges[index].smooth)shine*=lampShine(index);
+    float shine=materialEmissionGain(image);
+    if(lampFlickers(index,image)&&lampRanges[index].smooth)shine*=lampShine(index);
     if(shine>=1)return;
     unsigned alpha=(unsigned)std::lround(shine*255);
     for(size_t n=first;n<out.size();++n)out[n].lampTint=(out[n].lampTint&0xFFFFFFu)|alpha<<24;
@@ -260,7 +287,7 @@ static void surfaceLight(const SurfaceLightKey &key,int sector,float x,float y,f
         switchLights.push_back(light);
         return;
     }
-    if(lampFlickers(sector)) {light.flickerSector=sector;light.shine=lampShine(sector);}
+    if(lampFlickers(sector,image)) {light.flickerSector=sector;light.shine=lampShine(sector);}
     surfaceLights.push_back(light);
 }
 static const std::vector<FlatLightSample> &flatSamples(int sectorIndex,int lump,const Image &image) {

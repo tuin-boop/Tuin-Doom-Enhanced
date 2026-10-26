@@ -22,12 +22,13 @@ static void buildSolidMapMesh(){
  struct Cached {uint64_t id=0;unsigned revision=~0u;std::map<int,std::vector<Vertex>> vertices;};
  struct SkinCache {uint64_t revision=0;std::vector<Vertex> source,output;};
  static uint64_t nextSection=0;
+ static int colorMode=-1;
  static unsigned level=~0u;static std::map<lab::TileKey,Cached> cached;
  struct BatchCache {SkinCache whole;std::vector<Vertex> work;std::map<uint64_t,SkinCache> skins,patches;};
  static std::map<int,BatchCache> batchCaches;
  struct DamageBounds {unsigned revision=~0u;lab::Vec lo,hi;};
  static std::map<lab::TileKey,DamageBounds> damageBounds;
- if(level!=r_levelserial){level=r_levelserial;cached.clear();batchCaches.clear();damageBounds.clear();solidAssembly.vertices.clear();solidAssembly.ranges.clear();}
+ if(level!=r_levelserial||colorMode!=settings.materialRubble){colorMode=settings.materialRubble;level=r_levelserial;cached.clear();batchCaches.clear();damageBounds.clear();solidAssembly.vertices.clear();solidAssembly.ranges.clear();}
  auto pos=[](const Vertex& v){return lab::Vec{v.x,v.y,v.z};};
  auto interpolate=[](Vertex a,const Vertex& b,float t){
   auto lerp=[&](float x,float y){return x+(y-x)*t;};
@@ -204,6 +205,8 @@ static void buildSolidMapMesh(){
          field(p+lab::Vec{0,0,1})-field(p-lab::Vec{0,0,1})};
      auto smooth=lab::length(gradient)>.001f?lab::normalized(gradient):normal;
      v.red=std::abs(smooth.x);v.green=std::abs(smooth.y);v.blue=std::abs(smooth.z);
+     auto tint=rubbleSurfaceColor(p.x,p.y,p.z);
+     v.lampTint=0xff000000u|unsigned(tint[0]*255)|(unsigned(tint[1]*255)<<8)|(unsigned(tint[2]*255)<<16);
      v.u=lab::dot(p,texU);v.v=lab::dot(p,texV);
      float facet=.82f+.10f*std::abs(smooth.z);
      v.light=facet*(.58f+.42f*std::min(1.f,std::max(0.f,tile.volume.field(p,true))/1.5f));

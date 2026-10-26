@@ -127,8 +127,8 @@ void buildHeat(const Uniforms &camera) {
 // Dust motes: one speck in about half of the 48-unit cells around the eye,
 // world-anchored with a slow tic-stepped drift, shown only where the
 // flashlight beam or a sunbeam (in beamAir) catches it: a point is sunlit when the
-// floor point its sun ray leaves from is (the floor sun map; the sun stands
-// 40 degrees high). Each is one Doom pixel across at its distance.
+// floor point its sun ray leaves from is (the floor sun map, baked at
+// sunElevation). Each is one Doom pixel across at its distance.
 void buildDust(const Uniforms &camera) {
     if(!settings.dust||camera.effects[2]!=0||seamCells.empty())return;
     const Flash *beam=flashlightOn&&flashes.count&&flashes.lights[0].direction[3]>0?&flashes.lights[0]:nullptr;
@@ -150,6 +150,8 @@ void buildDust(const Uniforms &camera) {
         int own=seamCells[(size_t)cy*mapWidth+cx].own;
         if(own==noSector)continue;
         const sector_t &sector=sectors[own];
+        // Rain washes the air under the sky clear of dust (weather.cpp).
+        if(rainNow>0.01f&&sector.ceilingpic==skyflatnum)continue;
         float floor=floorZ(&sector);
         if(p[2]<floor+2||p[2]>ceilZ(&sector)-2)continue;
         float bright=0,color[3]={};
@@ -158,7 +160,7 @@ void buildDust(const Uniforms &camera) {
             bright+=amount;for(int c=0;c<3;++c)color[c]+=beam->color[c]*amount;
         }
         if(sun&&(size_t)own<beamAir.size()&&beamAir[own]) {
-            float lift=(p[2]-floor)/0.8391f;
+            float lift=(p[2]-floor)/std::tan(sunElevation);
             int fx=std::clamp((int)std::floor((p[0]-sunAzimuth[0]*lift-mapOrigin[0])/mapCell),0,mapWidth-1);
             int fy=std::clamp((int)std::floor((p[1]-sunAzimuth[1]*lift-mapOrigin[1])/mapCell),0,mapHeight-1);
             float visible=contactCells[4*((size_t)fy*mapWidth+fx)+2]/255.0f*0.6f;

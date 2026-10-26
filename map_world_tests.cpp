@@ -30,6 +30,12 @@ static void seams(MapWorld& world){
  }
 }
 int main(){try{
+ {MapWorld round;round.reset(source());round.blast({64,0,64},4);
+  float reference=round.sample({64,3,64});
+  for(int i=0;i<16;++i){float a=i*6.2831853f/16;
+   check(std::abs(round.sample({64,3*std::cos(a),64+3*std::sin(a)})-reference)<.001f,"Small gun crater is not radially symmetric");}
+ }
+
  // Arbitrarily oriented map faces cross the field's tetrahedral boundaries.
  // Every partition must conserve area and have an affine field throughout.
  {
@@ -138,7 +144,9 @@ int main(){try{
  MapWorld fragments;fragments.reset(pillarSource);
  fragments.blast({64,0,54},8);fragments.blast({64,0,74},8);
  check(fragments.sample({64,0,64})>0,"Fragment fixture missing its detached piece");
- check(!fragments.crumble().empty(),"Detached cross-tile fragment did not crumble");
+ size_t collapseAnchor=fragments.cutCount()-1;
+ fragments.blast({110,100,30},5);
+ check(!fragments.crumble(12,collapseAnchor,24).empty(),"Delayed collapse lost its original damage region");
  check(fragments.sample({64,0,64})<0,"Detached fragment remains solid");
  seams(fragments);
  std::ostringstream fragmentSave(std::ios::binary);fragments.save(fragmentSave);

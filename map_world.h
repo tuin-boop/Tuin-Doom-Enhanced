@@ -17,7 +17,7 @@ public:
  bool blast(Vec center,float radius,int sector=-1,int plane=0,float anchor=0,
   Vec capOrigin={},Vec capNormal={},float capDepth=1e9f,float maxDepth=4096,float stretch=1);
  bool heights(int sector,float floor,float ceiling);
- std::vector<Vec> crumble(int maximum=4);
+ std::vector<Vec> crumble(int maximum=4,size_t anchorIndex=size_t(-1),int totalLimit=32);
  float sample(Vec p)const;
  const WorldTile& tile(TileKey key);
  bool ray(Vec start,Vec direction,float range,Hit& hit);
@@ -29,6 +29,8 @@ public:
  bool load(std::istream&);
  const std::map<TileKey,WorldTile>& tiles()const{return cache;}
  size_t cutCount()const{return cuts.size();}
+ bool staticCut(size_t i)const{return i<cuts.size()&&cuts[i].sector<0;}
+ bool cutNear(size_t i,Vec p,float radius)const{return i<cuts.size()&&length(center(cuts[i])-p)<radius;}
  unsigned revision()const{return nextRevision;}
  uint64_t supportStamp(Vec point,float radius)const;
  uint64_t skinStamp(Vec lo,Vec hi,bool* mayRemove=nullptr)const;
@@ -44,7 +46,7 @@ private:
  uint64_t clock=0;
  Vec center(const MapCut&)const;
  float cutValue(Vec p,const MapCut&)const;
- void update(TileKey,WorldTile&,bool incremental=false);
+ void update(TileKey,WorldTile&,bool incremental=false,size_t firstCut=size_t(-1));
  static TileKey key(Vec);
  static bool intersects(TileKey,Vec,float);
 };

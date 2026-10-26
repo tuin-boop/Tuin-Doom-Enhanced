@@ -5,6 +5,8 @@ extern "C" {
 #endif
 int SV_Active(void);
 int SV_MapMode(void);
+int SV_Edited(float x,float y,float z);
+extern int sv_chain_collapses,sv_hanging_fragments,sv_collapse_size;
 int SV_MapPosition(mobj_t *thing,fixed_t x,fixed_t y);
 void SV_SectorChanged(sector_t *sector);
 int SV_Slide(mobj_t *thing);

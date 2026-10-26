@@ -5,13 +5,20 @@
 #include "d_main.h"
 #include "m_argv.h"
 #include "i_compat.h"
+#include "game_profile.h"
+#include "wad_probe.h"
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
 
 static char *selected_wad;
 static boolean selection_done;
 #ifdef __APPLE__
+#include <limits.h>
+#include <mach-o/dyld.h>
 extern int DOOM_ChooseWads(const char *bundled, char **base, char **addon);
+#endif
+#ifdef _WIN32
+#include <process.h>
 #endif
 static void selected(void *userdata, const char * const *files, int filter)
 {
@@ -41,9 +48,151 @@ static char *companion_patch(const char *wad)
     return NULL;
 }
 
-#ifndef __APPLE__
-#include "wad_probe.h"
+static boolean is_absolute(const char *path)
+{
+    if (path[0] == '/' || path[0] == '\\') return true;
+#ifdef _WIN32
+    if (SDL_isalpha((unsigned char)path[0]) && path[1] == ':') return true;
+#endif
+    return false;
+}
 
+/* Launchers such as Doom Runner pass paths relative to the folder they start
+ * the game in, but the game then runs from its save folder: make them absolute
+ * while they still resolve. -file and -deh take every path up to the next option. */
+static void absolute_path_args(int argc, char **argv)
+{
+    static const char *single[] = { "-iwad", "-config", "-record", "-soundfont" };
+    static const char *lists[] = { "-file", "-deh", "-bex" };
+    char *folder = SDL_GetCurrentDirectory();
+    if (!folder) return;
+    for (int i = 1; i < argc; ++i)
+    {
+        boolean path = false, list = false;
+        for (size_t k = 0; k < SDL_arraysize(single); ++k)
+            if (!SDL_strcasecmp(argv[i], single[k])) path = true;
+        for (size_t k = 0; k < SDL_arraysize(lists); ++k)
+            if (!SDL_strcasecmp(argv[i], lists[k])) path = list = true;
+        while (path && i + 1 < argc && argv[i + 1][0] != '-')
+        {
+            char *full;
+            ++i;
+            if (!is_absolute(argv[i]) && SDL_asprintf(&full, "%s%s", folder, argv[i]) > 0) argv[i] = full;
+            path = list;
+        }
+    }
+    SDL_free(folder);
+}
+
+/* Each game has its own program, beside this one: DOOM's and Heretic's.
+ * Hexen and the rest have none yet. */
+static const char *program_for(int game)
+{
+#if defined(__APPLE__)
+    if (game == DOOM_WAD_DOOM) return "Play DOOM";
+#elif defined(_WIN32)
+    if (game == DOOM_WAD_DOOM) return "doom.exe";
+    if (game == DOOM_WAD_HERETIC) return "derp-heretic.exe";
+#else
+    if (game == DOOM_WAD_DOOM) return "doom";
+#endif
+#ifndef _WIN32
+    if (game == DOOM_WAD_HERETIC) return "derp-heretic";
+#endif
+    return NULL;
+}
+
+/* The folder this program runs from (in the Mac app: Contents/MacOS). */
+static char *program_folder(void)
+{
+#ifdef __APPLE__
+    char path[PATH_MAX], real[PATH_MAX];
+    uint32_t size = sizeof(path);
+    if (_NSGetExecutablePath(path, &size) || !realpath(path, real)) return NULL;
+    char *slash = strrchr(real, '/');
+    if (!slash) return NULL;
+    slash[1] = 0;
+    return SDL_strdup(real);
+#else
+    const char *base = SDL_GetBasePath();
+    return base ? SDL_strdup(base) : NULL;
+#endif
+}
+
+#ifdef _WIN32
+/* _execv joins the arguments with spaces; quote the ones that hold any. */
+static char *quoted(const char *arg)
+{
+    if (!strpbrk(arg, " \t\"")) return SDL_strdup(arg);
+    size_t length = strlen(arg);
+    char *out = SDL_malloc(length * 2 + 3), *o = out;
+    if (!out) return NULL;
+    *o++ = '"';
+    for (const char *a = arg; *a; ++a) { if (*a == '"') *o++ = '\\'; *o++ = *a; }
+    *o++ = '"'; *o = 0;
+    return out;
+}
+#endif
+
+/* A WAD for another game starts that game's program with the same
+ * arguments plus the chosen WADs. Returns only when that fails. */
+static void hand_off(int game, int argc, char **argv, const char *wad, const char *addon)
+{
+    const char *program = program_for(game);
+    char *folder = program_folder();
+    char *path = NULL;
+    if (!program)
+    {
+        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, Game_Title(),
+            game == DOOM_WAD_HEXEN ? "Hexen cannot be played yet." : "This game cannot be played yet.", NULL);
+        SDL_free(folder);
+        return;
+    }
+    if (folder && SDL_asprintf(&path, "%s%s", folder, program) > 0)
+    {
+        FILE *probe = fopen(path, "rb");
+#ifdef __APPLE__
+        /* Next to the build's Play DOOM.app rather than inside it. */
+        if (!probe && game == DOOM_WAD_DOOM)
+        {
+            SDL_free(path); path = NULL;
+            if (SDL_asprintf(&path, "%sPlay DOOM.app/Contents/MacOS/Play DOOM", folder) > 0) probe = fopen(path, "rb");
+        }
+#endif
+        if (probe) fclose(probe);
+        else { SDL_free(path); path = NULL; }
+    }
+    SDL_free(folder);
+    if (!path)
+    {
+        char message[256];
+        snprintf(message, sizeof(message), "The program for this game (%s) is missing beside this one.", program);
+        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, Game_Title(), message, NULL);
+        return;
+    }
+    char **args = calloc((size_t)argc + 6, sizeof(char*));
+    if (!args) return;
+    int count = 0;
+    args[count++] = path;
+    for (int i = 1; i < argc; ++i) args[count++] = argv[i];
+    if (wad) { args[count++] = "-iwad"; args[count++] = (char *)wad; }
+    if (addon)
+    {
+        char *patch = companion_patch(addon);
+        args[count++] = "-file"; args[count++] = (char *)addon;
+        if (patch) { args[count++] = "-deh"; args[count++] = patch; }
+    }
+    SDL_Quit();
+#ifdef _WIN32
+    for (int i = 0; i < count; ++i) args[i] = quoted(args[i]);
+    _execv(path, (const char * const *)args);
+#else
+    execv(path, args);
+#endif
+    fprintf(stderr, "Could not start %s\n", path);
+}
+
+#ifndef __APPLE__
 #define MAX_CHOICES 8
 
 static int compare_paths(const void *a, const void *b)
@@ -61,7 +210,7 @@ static const char *file_name(const char *path)
 
 static void notice(const char *text)
 {
-    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, "DOOM", text, NULL);
+    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, Game_Title(), text, NULL);
 }
 
 /* Returns an index into paths, -1 for the extra choice, or -2 to quit. */
@@ -74,7 +223,7 @@ static int choose(const char *message, char **paths, int count, const char *extr
     if (extra) buttons[shown++] = (SDL_MessageBoxButtonData){ 0, -1, extra };
     buttons[shown++] = (SDL_MessageBoxButtonData){ SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT, -2, "Quit" };
     SDL_MessageBoxData box = { SDL_MESSAGEBOX_INFORMATION | SDL_MESSAGEBOX_BUTTONS_LEFT_TO_RIGHT,
-                               NULL, "DOOM", message, shown, buttons, NULL };
+                               NULL, Game_Title(), message, shown, buttons, NULL };
     if (!SDL_ShowMessageBox(&box, &result)) return -2;
     return result;
 }
@@ -97,10 +246,10 @@ static int choose_from_folder(const char *base, const char *bundled, char **game
         doom_wad_info info;
         if (!SDL_asprintf(&path, "%s/%s", folder, names[i])) continue;
         if (!DOOM_ProbeWad(path, &info)) invalid = 1;
-        else if (info.is_iwad && !info.has_palette) other_game = 1;
+        else if (info.is_iwad && (!info.has_palette || info.game == DOOM_WAD_HEXEN)) other_game = 1;
         else if (info.is_iwad && (info.episode_maps || info.numbered_maps) && base_count < MAX_CHOICES)
         { bases[base_count++] = path; continue; }
-        else if (!info.is_iwad && addon_count < MAX_CHOICES)
+        else if (!info.is_iwad && info.game != DOOM_WAD_HEXEN && addon_count < MAX_CHOICES)
         { addons[addon_count++] = path; continue; }
         SDL_free(path);
     }
@@ -115,7 +264,7 @@ static int choose_from_folder(const char *base, const char *bundled, char **game
     if (file) fclose(file);
     if (!base_count && !addon_count)
     {
-        if (other_game) notice("The wads folder holds a game WAD in another format, such as DOOM 64. Only DOOM, DOOM II, Final DOOM and Freedoom game WADs can be played.");
+        if (other_game) notice("The wads folder holds a game WAD that cannot be played yet, such as Hexen or DOOM 64. DOOM, DOOM II, Final DOOM, Heretic and Freedoom game WADs can be played.");
         else if (invalid) notice("The WAD files in the wads folder are damaged or unsupported.");
         result = invalid || other_game ? -1 : 0;
         goto done;
@@ -179,6 +328,7 @@ int main(int argc, char **argv)
         fprintf(stderr, "Could not initialize SDL: %s\n", SDL_GetError());
         return 1;
     }
+    absolute_path_args(argc, argv);
     const char *base = SDL_GetBasePath();
     char bundled[4096];
     snprintf(bundled, sizeof(bundled), "%sdefault.wad", base ? base : "./");
@@ -215,6 +365,16 @@ int main(int argc, char **argv)
             if (!selected_wad) { SDL_Quit(); return 0; }
         }
     }
+    /* The WAD may belong to another game's program. */
+    const char *wad = selected_wad;
+    for (int i = 1; i + 1 < argc; ++i)
+        if (!strcmp(argv[i], "-iwad")) wad = argv[i + 1];
+    doom_wad_info wad_info;
+    if (wad && DOOM_ProbeWad(wad, &wad_info) && wad_info.game != Game_WadKind())
+    {
+        hand_off(wad_info.game, argc, argv, has_iwad ? NULL : selected_wad, selected_addon);
+        SDL_Quit(); return 1;
+    }
     int solid_maps=0;
     for(int i=1;i<argc;++i)if(!strcmp(argv[i],"-solidmaps"))solid_maps=1;
     char *preferences = SDL_GetPrefPath("Local Games",
@@ -226,7 +386,7 @@ int main(int argc, char **argv)
     );
     if (!preferences)
     {
-        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "DOOM", "Could not create the game save folder.", NULL);
+        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, Game_Title(), "Could not create the game save folder.", NULL);
         SDL_Quit(); return 1;
     }
 #ifdef _WIN32
@@ -243,11 +403,11 @@ int main(int argc, char **argv)
         freopen("game.log", "a", stdout);
         freopen("game.log", "a", stderr);
     }
-    FILE *file = fopen("doom.cfg", "r");
+    FILE *file = fopen(Game_ConfigFile(), "r");
     if (file) fclose(file);
     else
     {
-        file = fopen("doom.cfg", "w");
+        file = fopen(Game_ConfigFile(), "w");
         if (file)
         {
             fputs("key_up 119\nkey_down 115\nkey_strafeleft 97\nkey_straferight 100\n"
@@ -281,7 +441,7 @@ int main(int argc, char **argv)
     int has_config = 0;
     for (int i = 1; i + 1 < argc; ++i)
         if (!strcmp(argv[i], "-config")) has_config = 1;
-    if (!has_config) { args[count++] = "-config"; args[count++] = "doom.cfg"; }
+    if (!has_config) { args[count++] = "-config"; args[count++] = (char *)Game_ConfigFile(); }
     myargc = count;
     myargv = args;
     D_DoomMain();

@@ -70,12 +70,12 @@ extern "C" int DOOM_ChooseWads(const char *bundled, char **base, char **addon)
                 NSString *path = [folder stringByAppendingPathComponent:name];
                 doom_wad_info info;
                 if (!DOOM_ProbeWad(path.fileSystemRepresentation, &info)) { invalid = YES; continue; }
-                if (info.is_iwad && !info.has_palette) otherGame = YES;
+                if (info.is_iwad && (!info.has_palette || info.game == DOOM_WAD_HEXEN)) otherGame = YES;
                 else if (info.is_iwad && (info.episode_maps || info.numbered_maps)) [bases addObject:path];
-                else if (!info.is_iwad) [addons addObject:path];
+                else if (!info.is_iwad && info.game != DOOM_WAD_HEXEN) [addons addObject:path];
             }
             if (!bases.count && !addons.count) {
-                explain(otherGame ? @"This folder holds a game WAD in another format, such as DOOM 64. Only DOOM, DOOM II, Final DOOM and Freedoom game WADs can be played."
+                explain(otherGame ? @"This folder holds a game WAD that cannot be played yet, such as Hexen or DOOM 64. DOOM, DOOM II, Final DOOM, Heretic and Freedoom game WADs can be played."
                         : invalid ? @"The WAD files in this folder are damaged or unsupported. Choose a folder with valid DOOM WAD files."
                         : @"No WAD files were found. Choose the folder that directly contains your .wad files.");
                 continue;

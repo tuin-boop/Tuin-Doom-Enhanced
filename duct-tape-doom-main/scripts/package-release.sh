@@ -9,7 +9,7 @@ project_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 platform=$1
 build_dir=$2
 freedoom_dir=$3
-stage="$4/DuctTapeDOOM-$platform"
+stage="$4/DERP-$platform"
 
 program=
 for candidate in "$build_dir/Release/doom.exe" "$build_dir/doom.exe" "$build_dir/doom"; do
@@ -26,6 +26,19 @@ fi
 rm -rf "$stage"
 mkdir -p "$stage/wads" "$stage/licenses/Freedoom"
 cp "$program" "$stage/"
+# The Heretic program beside it: the launcher hands Heretic WADs over.
+heretic=
+for candidate in "$(dirname -- "$program")/derp-heretic.exe" "$(dirname -- "$program")/derp-heretic"; do
+    if [ -f "$candidate" ]; then
+        heretic=$candidate
+        break
+    fi
+done
+if [ -z "$heretic" ]; then
+    echo "Build derp-heretic too; see BUILDING.md." >&2
+    exit 1
+fi
+cp "$heretic" "$stage/"
 cp "$freedoom_dir/freedoom1.wad" "$stage/default.wad"
 cp "$project_dir/README.md" "$project_dir/PLAY.md" "$stage/"
 cp "$project_dir/LICENSE.TXT" "$stage/licenses/GPL-3.txt"

@@ -1,6 +1,7 @@
 /* Level geometry built at load: BSP floor polygons, sector classification
    (liquids, pits, outdoor) and the map-space seam and contact maps. */
 #include "internal.h"
+#include "../audio/ambience_spots.h"
 
 namespace doom3d {
 std::vector<std::vector<Point>> floors;
@@ -110,12 +111,43 @@ static void weldFloors() {
         poly=std::move(out);
     }
 }
-// Liquids are the liquid-named flats the engine animates: Doom 2's SLIME13-16
-// share the name but are still metal floors (MAP04's courtyard).
-static bool liquidFlat(int pic) {
-    const char *name=lumpinfo[firstflat+pic].name;int next;
-    return (!strncmp(name,"NUKAGE",6)||!strncmp(name,"FWATER",6)||!strncmp(name,"SLIME",5)||
-            !strncmp(name,"BLOOD",5)||!strncmp(name,"LAVA",4))&&P_PicAnimationNext(false,pic,&next)>0;
+// Liquids are the liquid flats (game_materials.h) the engine animates: Doom 2's
+// SLIME13-16 share the name but are still metal floors (MAP04's courtyard).
+static game_liquid liquidFlat(int pic) {
+    char name[9];memcpy(name,lumpinfo[firstflat+pic].name,8);name[8]=0;int next;
+    game_liquid kind=Game_LiquidFlat(name);
+    return kind!=GAME_LIQUID_NONE&&P_PicAnimationNext(false,pic,&next)>0?kind:GAME_LIQUID_NONE;
+}
+// How a liquid flat meets the walls around it (LIQUID_LOOK_*).
+int liquidLook(int pic) {
+    static std::vector<signed char> looks;
+    if(pic<0||pic>=numflats)return LIQUID_LOOK_NONE;
+    if((int)looks.size()!=numflats)looks.assign(numflats,-1);
+    if(looks[pic]<0) {
+        char name[9];memcpy(name,lumpinfo[firstflat+pic].name,8);name[8]=0;
+        game_liquid kind=liquidFlat(pic);
+        looks[pic]=kind==GAME_LIQUID_NONE?LIQUID_LOOK_NONE:Game_HotFlat(name)?LIQUID_LOOK_HOT:
+                   kind==GAME_LIQUID_WATER?LIQUID_LOOK_WATER:Game_AmbientFlat(name,0)==AMBIENT_BLOOD?LIQUID_LOOK_BLOOD:LIQUID_LOOK_THICK;
+    }
+    return looks[pic];
+}
+bool iceFlat(int pic) {
+    static std::vector<signed char> ice;
+    if(pic<0||pic>=numflats)return false;
+    if((int)ice.size()!=numflats)ice.assign(numflats,-1);
+    if(ice[pic]<0) {char name[9];memcpy(name,lumpinfo[firstflat+pic].name,8);name[8]=0;ice[pic]=Game_IceFlat(name)?1:0;}
+    return ice[pic]!=0;
+}
+// Big pools fade their flat toward its average with distance, keeping this
+// much of its contrast: water most freely, thick liquids less, lava least so
+// its glowing cracks still read.
+float liquidDetailFloor(int pic) {
+    switch(liquidLook(pic)) {
+    case LIQUID_LOOK_WATER: return 0.2f;
+    case LIQUID_LOOK_THICK: case LIQUID_LOOK_BLOOD: return 0.35f;
+    case LIQUID_LOOK_HOT: return 0.5f;
+    default: return 0;
+    }
 }
 static void classifySectorMist() {
     sectorMist.assign(numsectors,{});
@@ -134,21 +166,23 @@ static void classifySectorMist() {
         }
         mist.pit=hasNeighbor&&lowestNeighbor-units(sector.floorheight)>=24;
         int lump=firstflat+sector.floorpic;
-        mist.liquid=liquidFlat(sector.floorpic);
+        game_liquid liquid=liquidFlat(sector.floorpic);
+        mist.liquid=liquid!=GAME_LIQUID_NONE;
         // Only water mirrors the room: nukage, slime, blood and lava are too
         // murky for the toned-down reflection to read as more than a smudge.
-        mist.reflective=mist.liquid&&!strncmp(lumpinfo[lump].name,"FWATER",6);
+        mist.reflective=liquid==GAME_LIQUID_WATER;
         // Every liquid but water is thick: heavy splashes, bubbles, and a
         // collar of goo around things standing in it.
         mist.thick=mist.liquid&&!mist.reflective;
-        mist.toxic=sector.special==4||sector.special==5||sector.special==7||sector.special==11||sector.special==16;
+        mist.toxic=Game_DamagingFloor(sector.special);
         if(mist.liquid&&W_LumpLength(lump)>=4096) {
             const byte *flat=(const byte*)W_CacheLumpNum(lump,PU_CACHE);
             mist.color={};
             for(int pixel=0;pixel<4096;++pixel)for(int c=0;c<3;++c)
                 mist.color[c]+=palette[flat[pixel]*3+c]/(4096.0f*255.0f);
         } else if(mist.toxic) mist.color={0.18f,0.30f,0.12f};
-        bool lava=!strncmp(lumpinfo[lump].name,"LAVA",4);
+        char flatName[9];memcpy(flatName,lumpinfo[lump].name,8);flatName[8]=0;
+        bool lava=Game_HotFlat(flatName);
         if((lava||mist.toxic)&&W_LumpLength(lump)>=4096) {
             const byte *flat=(const byte*)W_CacheLumpNum(lump,PU_CACHE);
             float rgb[3]={};
@@ -271,10 +305,21 @@ float sectorHeight(const sector_t *sector,bool ceiling) {
     float old=oldHeights[index][ceiling];
     return old+(now-old)*renderFraction;
 }
+const game_mood &levelMood() {
+    static game_mood mood={1,1,0,0,-1,1,{1,1,1}};static unsigned serial=~0u;static int authored=-1;
+    if(serial!=r_levelserial||authored!=settings.authored) {
+        serial=r_levelserial;authored=settings.authored;
+        mood={1,1,0,0,-1,1,{1,1,1}};
+        if(authored)Game_Mood(gameepisode,gamemap,&mood);
+    }
+    return mood;
+}
 float lighting(const sector_t *sector,bool bright) {
     if(bright) return 1;
     float level=lampLightLevel(sector)/255.0f;
     if(bakedLightsActive&&lampDrop.size()==(size_t)numsectors)level-=lampDrop[sector-sectors];
+    // The episode's mood (Game_Mood) can darken the outdoors.
+    if(sector->ceilingpic==skyflatnum)level*=levelMood().outdoor;
     level=std::clamp(level,0.12f,1.0f);
     size_t index=sector-sectors;
     if(index<shotDim.size())level*=shotDim[index]; // Rooms whose lamps were shot out (shot_lights.cpp).

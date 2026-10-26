@@ -21,6 +21,7 @@
 #include "p_notices.h"
 #include "m_bbox.h"
 #include "d_items.h"
+#include "st_stuff.h"
 #ifdef DOOM_RENDER3D
 #include "../platform/i_render3d.h"
 #include "../platform/mod_soundbank.h"
@@ -328,7 +329,8 @@ static void test_overlap_escape(void){
 }
 static void test_fluid_monsters(void){
     if(!P_FluidEnabled())return;
-    mobjtype_t types[]={MT_POSSESSED,MT_SHOTGUY,MT_CHAINGUY,MT_WOLFSS,MT_TROOP,MT_SERGEANT,MT_SHADOWS,MT_BRUISER,MT_KNIGHT,MT_UNDEAD,MT_FATSO,MT_VILE,MT_BABY,MT_CYBORG,MT_SPIDER};
+    extern int p_persistentpursuit;int savedPursuit=p_persistentpursuit;p_persistentpursuit=0;
+    mobjtype_t types[]={MT_POSSESSED,MT_SHOTGUY,MT_CHAINGUY,MT_WOLFSS,MT_TROOP,MT_SERGEANT,MT_SHADOWS,MT_BRUISER,MT_KNIGHT,MT_UNDEAD,MT_FATSO,MT_VILE,MT_BABY,MT_CYBORG,MT_SPIDER,MT_HEAD,MT_PAIN,MT_SKULL};
     mobj_t *player=players[0].mo;
     int original=states[S_POSS_RUN1].tics;
     for(unsigned i=0;i<sizeof(types)/sizeof(types[0]);++i)for(int duration=2;duration<=4;++duration){
@@ -359,6 +361,11 @@ static void test_fluid_monsters(void){
         if(actor->x!=end)I_Error("Fluid blocked sequence was not cancelled");
         P_SetMobjState(actor,S_POSS_RUN1);end=actor->x;actor->health=0;P_FluidTick(actor);
         if(actor->x!=end)I_Error("Fluid death cancellation");
+        if(types[i]==MT_SKULL){
+            actor->health=100;actor->movedir=0;P_SetMobjState(actor,S_POSS_RUN1);
+            end=actor->x;actor->flags|=MF_SKULLFLY;P_FluidTick(actor);
+            if(actor->x!=end)I_Error("Fluid chase moved a charging Lost Soul");
+        }
         P_RemoveMobj(actor);
     }
     states[S_POSS_RUN1].tics=original;
@@ -380,7 +387,8 @@ static void test_fluid_monsters(void){
         P_RemoveMobj(actor);
         puts("FluidMonsters: continuous per-tic walking across six live AI state transitions passed.");
     }
-    puts("FluidMonsters: 15 monster types, fractional speed, AI cadence and cancellation passed.");
+    p_persistentpursuit=savedPursuit;
+    puts("FluidMonsters: 18 monster types, fractional speed, AI cadence and cancellation passed.");
 }
 static int observe_sound(int s,int v,int sep,int pitch,int priority,int weapon){++routed_sounds;return -1;}
 static void test_map_sound_origins(void){
@@ -1141,6 +1149,39 @@ void I_TestFrame(void)
         puts("PASS ordinary map: split linedef destruction, bidirectional shots and native player walking.");
         capture=gametic+4;return;
     }
+    if(getenv("DOOM_TEST_STUCKBARON")){
+        static int start=-1,last=-1;static mobj_t *trapped=NULL;
+        static fixed_t originalX,originalY;
+        if(gamestate!=GS_LEVEL||!players[0].mo)return;
+        if(start<0){start=gametic;players[0].cheats|=CF_GODMODE;}
+        int elapsed=gametic-start;
+        if(last!=elapsed&&elapsed%35==0){last=elapsed;
+            for(thinker_t *th=thinkercap.next;th!=&thinkercap;th=th->next){
+                if(th->function.acp1!=(actionf_p1)P_MobjThinker)continue;
+                mobj_t *m=(mobj_t*)th;
+                if(m->type!=MT_BRUISER||m->health<=0)continue;
+                if(elapsed==0&&m->target&&m->ceilingz-m->floorz<m->height+FRACUNIT){
+                    trapped=m;originalX=m->x;originalY=m->y;
+                }
+                printf("BARON %d xyz %.2f %.2f %.2f floor %.2f ceiling %.2f state %d target %d move %d radius %.1f\n",elapsed,m->x/(float)FRACUNIT,m->y/(float)FRACUNIT,m->z/(float)FRACUNIT,m->floorz/(float)FRACUNIT,m->ceilingz/(float)FRACUNIT,(int)(m->state-states),m->target!=NULL,m->movedir,m->radius/(float)FRACUNIT);
+                if(elapsed==0){extern fixed_t tmfloorz,tmceilingz,tmdropoffz;
+                    for(int dy=-1;dy<=1;++dy)for(int dx=-1;dx<=1;++dx){
+                        int ok=P_CheckPosition(m,m->x+dx*8*FRACUNIT,m->y+dy*8*FRACUNIT);
+                        printf("PROBE %d %d clear %d floor %.1f ceiling %.1f drop %.1f\n",dx,dy,ok,tmfloorz/(float)FRACUNIT,tmceilingz/(float)FRACUNIT,tmdropoffz/(float)FRACUNIT);
+                    }
+                }
+            }
+        }
+        if(elapsed==10)I_Render3DScreenshotTo("stuckbaron-before.png");
+        if(elapsed>=350){
+            if(!trapped||P_AproxDistance(trapped->x-originalX,trapped->y-originalY)<64*FRACUNIT)
+                I_Error("Saved Baron remained trapped in shallow crater under low ceiling");
+            if(trapped->z+trapped->height>trapped->ceilingz+FRACUNIT)
+                I_Error("Baron escaped through ceiling");
+            puts("PASS saved Baron steps out of shallow crater and traverses low room");
+            I_Render3DScreenshotTo("stuckbaron-after.png");I_Quit();
+        }return;
+    }
     if(getenv("DOOM_TEST_DEMONSTUCK")){
         static int start=-1,last=-1;static mobj_t *trapped=NULL;static fixed_t originalX,originalY;
         if(gamestate!=GS_LEVEL||!players[0].mo)return;
@@ -1172,11 +1213,107 @@ void I_TestFrame(void)
             puts("PASS saved demon retreats from ledge and moves on the lower floor");
             I_Render3DScreenshotTo("demonstuck-after.png");I_Quit();}return;
     }
+    if(getenv("DOOM_TEST_SAVED_ENV")){
+        static int start=-1;if(gamestate!=GS_LEVEL||gametic<25)return;if(start<0){start=gametic;
+            mobj_t *m=players[0].mo;printf("SAVED ENV E%dM%d position %.1f %.1f %.1f sector %d angle %u\n",gameepisode,gamemap,m->x/(float)FRACUNIT,m->y/(float)FRACUNIT,m->z/(float)FRACUNIT,(int)(m->subsector->sector-sectors),m->angle);
+            extern void I_DebugSavedLiquid(void);I_DebugSavedLiquid();
+            if(getenv("DOOM_TEST_ENV_LOOKDOWN"))I_Render3DLook(250);
+        }
+        if(gametic-start==210){extern void I_DebugSavedLiquid(void);I_DebugSavedLiquid();I_Render3DScreenshotTo(getenv("DOOM_TEST_SAVED_ENV"));}
+        if(gametic-start>=215)I_Quit();return;
+    }
+    if(getenv("DOOM_TEST_ROMERO_POPUP")){
+        static int start=-1;if(gamestate!=GS_LEVEL||gametic<30)return;
+        if(start<0){extern unsigned p_romero_serial;++p_romero_serial;start=leveltime;}
+        int elapsed=leveltime-start;
+        if(elapsed==12)I_Render3DScreenshotTo("romero-popup-shake.png");
+        if(elapsed==30)I_Render3DScreenshotTo("romero-popup-fly.png");
+        if(elapsed>48){puts("PASS Romero popup sequence");I_Quit();}return;
+    }
+    if(getenv("DOOM_TEST_ROMERO")){
+        if(gamestate!=GS_LEVEL||gametic<25)return;
+        mobj_t *p=players[0].mo;int saved=players[0].cheats;
+        players[0].cheats=CF_GODMODE;
+        mobj_t *r=P_SpawnMobj(p->x+64*FRACUNIT,p->y,p->z+32*FRACUNIT,MT_ROCKET);r->target=p;
+        if(P_RomeroStick(r,1,0,0))I_Error("Disabled cheat stuck rocket");
+        for(int twice=0;twice<3;++twice){
+            const char *code="johnromerogod";
+            while(*code){event_t e={ev_keydown,*code++,0,0};ST_Responder(&e);}
+            if(!!(players[0].cheats&CF_ROMERO)!=(twice!=1))I_Error("Typed cheat toggle failed");
+        }
+        if(P_RomeroStick(r,0,0,1))I_Error("Rocket stuck to floor");
+        if(!P_RomeroStick(r,1,0,0))I_Error("Enabled rocket did not stick");
+        fixed_t x=r->x,y=r->y,z=r->z;
+        for(int i=0;i<TICRATE/2-1;++i)P_MobjThinker(r);
+        if(r->x!=x||r->y!=y||r->z!=z||r->threshold!=-32001)I_Error("Fuse did not hold rocket");
+        P_MobjThinker(r);
+        int children=0;
+        for(thinker_t *th=thinkercap.next;th!=&thinkercap;th=th->next){
+            if(th->function.acp1!=(actionf_p1)P_MobjThinker)continue;
+            mobj_t *c=(mobj_t*)th;
+            if(c!=r&&c->type==MT_ROCKET&&c->threshold==-32002){++children;
+                if(P_RomeroStick(c,1,0,0))I_Error("Child rocket multiplied");
+            }
+        }
+        if(children!=25)I_Error("Expected 25 child rockets, got %d",children);
+        freeaim=true;tourpitch=.6f;
+        P_RomeroDrunk(p);
+        int drunk=0;unsigned directions=0;
+        for(thinker_t *th=thinkercap.next;th!=&thinkercap;th=th->next){
+            if(th->function.acp1!=(actionf_p1)P_MobjThinker)continue;
+            mobj_t *c=(mobj_t*)th;
+            if(c->type==MT_ROCKET&&c->threshold==-32002&&c->movecount==1){
+                ++drunk;directions|=1u<<(c->angle>>29);
+                if(c->momz<=0||c->reactiontime!=TICRATE/2)I_Error("Vertical aim or straight fuse failed");
+                if(P_RomeroStick(c,1,0,0))I_Error("Drunk missile multiplied");
+            }
+        }
+        if(drunk!=25||directions!=(1u<<(p->angle>>29)))I_Error("Forward launch/count failed");
+        puts("PASS drunk rockets: 25 tagged missiles, upward aim and straight launch fuse, recursion rejected");
+        players[0].cheats=saved;
+        puts("PASS Romero: toggle gating, wall-only sticking, stationary fuse, exactly 25 nonrecursive children");I_Quit();return;
+    }
+    if(getenv("DOOM_TEST_VOXELS")){
+        static int frame=0;if(gamestate!=GS_LEVEL||gametic<25)return;
+        ++frame;
+        if(frame==1){extern void I_TestVoxelModels(void);I_TestVoxelModels();
+            mobj_t *p=players[0].mo;int a=p->angle>>ANGLETOFINESHIFT;
+            mobj_t *m=P_SpawnMobj(p->x+128*finecosine[a],p->y+128*finesine[a],p->z,MT_POSSESSED);
+            m->angle=p->angle+ANG180;paused=true;}
+        if(frame==4)I_Render3DScreenshotTo("voxel-models.png");
+        if(frame==8){puts("PASS native voxel GPU scene");I_Quit();}return;
+    }
+    if(getenv("DOOM_TEST_PS2_STYLE")){
+        static int frame=0;if(gamestate!=GS_LEVEL||gametic<25)return;
+        extern void I_TestPS2Style(int);
+        ++frame;
+        if(frame==1){paused=true;I_TestPS2Style(0);}
+        if(frame==4)I_Render3DScreenshotTo("ps2-style-off.png");
+        if(frame==6)I_TestPS2Style(1);
+        if(frame==10)I_Render3DScreenshotTo("ps2-style-on.png");
+        if(frame==12)I_TestPS2Style(0);
+        if(frame==16)I_Render3DScreenshotTo("ps2-style-restored.png");
+        if(frame==18){puts("PASS PS2 style GPU on/off rendering");I_Quit();}return;
+    }
+    if(getenv("DOOM_TEST_ENV_MENU")){
+        static int frame=0;if(gamestate!=GS_LEVEL||gametic<25)return;
+        ++frame;
+        if(frame==1){extern int I_TestSettingsControls(void);if(!I_TestSettingsControls())I_Error("Settings control regression");puts("PASS menu dependencies, preserved child values, discard, sidebar and navigation");I_Render3DSettingsMenu();I_Render3DSettingsKey(SDL_SCANCODE_TAB,0);I_Render3DSettingsKey(SDL_SCANCODE_TAB,0);}
+        if(frame==4)I_Render3DScreenshotTo("environment-menu.png");
+        if(frame==5)I_Render3DSettingsKey(SDL_SCANCODE_TAB,0);
+        if(frame==8)I_Render3DScreenshotTo("destruction-menu.png");
+        if(frame==10){puts("PASS environment and destruction menu render");I_Quit();}return;
+    }
     if(getenv("DOOM_TEST_SOLID_PUFF")){
         if(gamestate!=GS_LEVEL||gametic<25)return;
+        extern void I_TestElectricalFaults(void);I_TestElectricalFaults();
+        extern void I_TestEnvironment(void);I_TestEnvironment();
+        extern void I_TestOutdoorWind(void);I_TestOutdoorWind();
+        extern void I_TestLiquidProjectiles(void);I_TestLiquidProjectiles();
+        extern void I_TestRubbleSelection(void);I_TestRubbleSelection();
         extern void I_TestImpactOptions(void);I_TestImpactOptions();I_Quit();return;
     }
-    if(getenv("DOOM_TEST_GLASS_HEIGHT")){
+    if(getenv("DOOM_TEST_GLASS_HEIGHT")||getenv("DOOM_TEST_GLASS_SUPPORT")){
         if(gamestate!=GS_LEVEL||gametic<25)return;
         extern void P_ZMovement(mobj_t*);
         mobj_t puff={0};puff.type=MT_PUFF;puff.flags=MF_NOGRAVITY;
@@ -1289,6 +1426,11 @@ void I_TestFrame(void)
                 p->mo->angle=originalAngle+(int)(sinf(elapsed*.11f)*(ANG45/12));
             }
             P_FireWeapon(p);lastShot=elapsed/3;
+        }
+        if(getenv("DOOM_TEST_ROCKET_REFERENCE")){
+            if(elapsed==37)I_Render3DScreenshotTo("rocket-reference-launch.png");
+            if(elapsed==42)I_Render3DScreenshotTo("rocket-reference-flight.png");
+            if(elapsed==47)I_Render3DScreenshotTo("rocket-reference-trail.png");
         }
         if(getenv("DOOM_TEST_RUBBLE_CLOSE")&&elapsed==60){
             double angle=p->mo->angle*(6.283185307179586/4294967296.0);

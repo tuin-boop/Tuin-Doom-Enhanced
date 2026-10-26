@@ -1,0 +1,155 @@
+Tuin-Doom-Enhanced — local update, 25 October 2026
+
+Installed: release-standard/Tuin-Doom-Enhanced.exe
+Also retained: release-oct25-integration/Tuin-Doom-Enhanced.exe
+Previous playable version: release-standard/Tuin-Doom-Enhanced-pre-oct25-integration.exe
+Source backup: ../research/pre-oct25-integration-source.zip
+Current source: engine-source (also retained in upstream-integration).
+No GitHub release was published during this update.
+
+Added from the supplied upstream archive, preserving the Doom destruction port:
+- Progressive glass: two chips followed by a spreading fracture; instant breaking remains selectable.
+- Live computer readouts, authored episode weather, rain and wet surfaces.
+- Worn metal and window streaks.
+- Hidden machinery, alternate computer sounds, adjoining-room acoustics and natural distance falloff.
+- Blood spray, drips and smears.
+- Inverted mouse look, classic aiming and quicksave/quickload confirmation controls.
+- Upstream rendering/material refinements with the existing liquid animation cache preserved.
+
+New surface-matching option:
+F4 > Effects > Match rubble to surface.
+Crater interiors, loose stone chips and dust sample nearby original wall/floor artwork for their color.
+The rough fractured material remains; this is color matching, not a copy of the wall pattern.
+Turning it off restores grey rubble. Cached map-space samples avoid resampling every frame.
+
+Sound adjustment following feedback:
+Reduced the bell-like low modes and shortened ringing in synthesized glass contacts.
+Emphasized short pressure/scrape transients; retained the scattered falling-fragment tail.
+F4 > Sound > Breaking glass still offers Shatter and Fracture.
+
+All new features have F4 controls. Existing user configuration and saves were not replaced.
+Default new-install damage stays at 250%; optional extra death animations are off.
+Ragdolls are disabled. Heretic is omitted at the user's request.
+Both rocket-fire styles, their shared launch height, Fluid weapon/flying-monster animation and previous impact features remain.
+
+Validation:
+- 26 core tests passed, including glass geometry, audio routing, wounds, archives, Fluid weapons and lighting workers.
+- After glass tuning, guarded/additive synthesis, multiple rates, attack/tail energy and bank-rate checks passed again.
+- Native firing, saves, loading, level changes, fidgets and all 18 Fluid monster animation types passed.
+- Progressive and instant glass modes, hit-height rejection, puff replacement and rubble particle limits passed.
+- New toggle reads and warm-wall tint/grey fallback passed.
+- F4 map selection and fullscreen round-trip passed after fixing reset indicators on map actions.
+- Moving damaged door test, LAG4 save playback, and native damaged-geometry save/load passed.
+- Ordinary map destruction passed in Doom E1M1, Doom II MAP01 and mapsofchaos-ok.wad E1M1.
+- Inspected game and F4 screenshots; verified packaged engine hash against the tested executable.
+
+Logs: gameplay-test/integration-*.log
+Build: integration-build, Release configuration.
+These checks cover the listed cases; they do not establish a universal frame-time guarantee or test every custom map.
+
+2026-10-25: Liquid projectile bursts
+- Added toggle Textures > Liquids > Liquid projectile bursts (default on; Splashes required).
+- Surface rocket hits replace the rendered fireball and its light with a larger liquid spout, rings and airborne droplets. Plasma, BFG and monster projectiles use smaller profiles.
+- Droplets inherit the liquid texture color, collide with local sector walls and leave fading downward runs. Marks follow moving wall anchors and are hidden when their supporting wall is excavated.
+- Cosmetic only: existing damage, explosion sound and projectile gameplay remain unchanged.
+- Global limits: 384 airborne drops, 96 wall runs, 64 tracked explosions; effects clear on map changes and toggle off.
+- Native regression passed: projectile profiles, surface/dry rejection, wall collision/rendering/expiry, toggle, caps, existing impact options/material checks. Build succeeded. No visual gameplay review yet.
+- Source mirrored into upstream-integration for the active build. Standard local launcher updated; previous executable retained as Tuin-Doom-Enhanced-before-liquid-bursts.exe.
+- Packaged SHA256: F09C6CF48505AF2709867EE37FB1562E784A235F6601F911E40B61A005EE6F07.
+
+Bullet-liquid follow-up: solid-world hits now route original floor surfaces through R_PlaneImpact, allowing liquid splashes to suppress stone effects and legacy puffs. Native real P_LineAttack regression plus impact suite passed. Local standard launcher updated; prior package retained in release-liquid-bursts.
+Correction: standard launcher replacement was blocked because it is currently running. The updated build is ready in release-liquid-bullets/Tuin-Doom-Enhanced.exe; standard still contains the preceding liquid-bursts build.
+
+Outdoor wind: added Outdoor wind dust toggle (default on) and Wind dust density slider, alongside Dust motes in the graphics panel. Sparse world-anchored gusts, low ground debris, sky-sector and drift-path shelter checks, rain suppression and 128-particle cap. No persistent actors or gameplay RNG. Native rendering/toggle/budget/rain checks and bullet/liquid impact regressions passed. Package: release-outdoor-wind/Tuin-Doom-Enhanced.exe. Previous releases retained.
+
+Wind gust refinement: unchanged dust/debris appearance; faster ground (105-175 units/s baseline) and airborne (85-155) movement, coherent speed surges, sideways eddies and ground hops. Shorter 2.4-second life and finer shelter path checks. Native wind and liquid regression suite passed. Packaged in release-wind-gusts; previous release-outdoor-wind retained.
+
+2026-10-25 Environmental reactions and menu organization
+- Environment tab: visual master, low/balanced/high dust budget, pressure waves, settling dust, debris liquid reactions, wind controls, runoff and electrical damage. Each key persists independently; dependency hints and cost notes added. Collapse gameplay remains separate under Effects.
+- Pressure waves impart cosmetic impulses to nearby loose debris with a visibility trace, plus a ground dust wave. Dust settles and fades. At most six burst emissions per tic, 64/128/256 environmental particles, 48 debris impulses per burst.
+- Local support collapse: detached components up to 4/12/24 field nodes; support search confined to 48-unit vicinity; up to 24 removed nodes per check. Optional 18-tic hanging delay; one queued check every four tics, queue cap 16. Up to two falling impacts per removal and two secondary generations. Full queues skip excess checks. Dynamic doors/lifts keep prior tiny-fragment cleanup. Removal uses the existing geometry journal so render/collision/save state agree. On load recent static cuts are rechecked; transient timing is not serialized.
+- Visible falling rubble makes small liquid-colored splashes; heavy pieces disappear into liquids and light flecks linger. Bounded by shared 384-drop cap.
+- Runoff: up to 12 temporary 20-second streams at damaged raised liquid edges, with an open-path check; no liquid-level simulation. Streams stop on toggle off or floor movement. Gameplay visual review on varied maps remains needed.
+- Electrical damage: at most 16 short-lived faults on hit/broken powered fixtures, intermittent blue sparks, short arcs and local flashes; up to two flashes per tic, 5-second lifetime. Broken-tile flicker extended while enabled.
+- Validation: map-world tests (including delayed origin selection, collision, seams, save/load and liquid protection); native impact suite including environmental impulse/budget/toggles/expiry, electrical cap/expiry/toggle, liquid splash/runoff cleanup; moving-door regression; F4 map/fullscreen navigation; full native solid-map save/load. Environment menu screenshot inspected. No claim of a universal frame-time target or exhaustive visual/map validation.
+- Packaged release-environment-reactions/Tuin-Doom-Enhanced.exe. Previous wind build preserved in release-wind-gusts and standard backup. No GitHub release published for this task.
+
+Collapse/runoff follow-up:
+User confirmed the large disappearing slab in the screenshots is an opening map sector. Moving sections remain excluded from new chain collapses. No save was available; that exact hitch was not reproduced.
+- Collapse removal now applies its new batch of cuts incrementally to existing tiles rather than resampling/replaying the entire history. Uncached support neighbours use saved-field sampling instead of assumed solid support. Nearby pending checks coalesce without postponing their original due time. Added -profilesolid collapse timing.
+- Runoff probes actual solid-world receiver depth rather than requiring an authored lower sector floor. It searches 4/8/16/24 units into a crater, validates the liquid source and open route, and keeps streams active until map/toggle/source-height changes. More visible emission. Drops can enter excavated space below original sector floors instead of disappearing there.
+- Native regression constructs an actual pit below an unchanged sector floor and verifies runoff registration and surviving droplets; impact suite passed. Map-world delayed collapse/seams/save-load/liquid protection suite passed. Exact gameplay appearance and hitch at the user's location remain unverified.
+- Packaged release-collapse-runoff-fix/Tuin-Doom-Enhanced.exe; previous release-environment-reactions retained.
+
+2026-10-25 saved environment follow-up:
+- Reproduced user NORUNOFF (slot 0) and NOCOLLAPS (slot 1) on Doom E1M1 in isolated validation profile; original saves unchanged.
+- Rediscover nearby liquid outlets after loading existing damage, including pool-floor holes. Bounded candidate processing and stream count.
+- Added narrow collision-clipped liquid sheets using source flat animation/material, plus falling stream segments. Cosmetic runoff, not full fluid volume simulation or arbitrary cavity flooding. Existing Environment / Liquid runoff toggle controls it.
+- Droplets use excavated support instead of disappearing at original sector floor.
+- Skip fully interior support seeds; measured NORUNOFF support checks reduced from ~11–19 ms to ~3.5–5.1 ms (not total frame timing).
+- Native impact/environment suite passes, including generated liquid surface, crater depth, toggle cleanup, limits and expiry. Map-world geometry/seam/save tests pass.
+- NOCOLLAPS staircase remains: current collapse feature is capped small disconnected fragments, not structural collapse of large staircase slabs. Not claimed fixed.
+- Built release-saved-environment-fix and updated release-standard. Previous release-collapse-runoff-fix retained.
+
+2026-10-25 runoff visual-only correction:
+User explicitly rejected a level/flat patch and requested an effect.
+Removed runoff world-batch sheets and their geometry hook entirely.
+Runoff now uses particle-pass procedural liquid shader: soft flowing rivulets, varying thickness, modest wet highlights, rounded droplets, small landing ripple rings.
+Gravity arcs stop at actual rubble collision; no new floor, no map changes, no solid liquid surface. Uses existing Environment / Liquid runoff toggle.
+Native tests pass for gravity direction, particle-only effect modes, crater support, toggle cleanup and budgets. Inspected NORUNOFF capture looking down at the breach; effect is subtle thin flow, no opaque sheet.
+New local release-runoff-effects packaged and copied to release-standard with matching SHA256. Prior release-saved-environment-fix preserved. No GitHub publication.
+
+2026-10-25 rocket / rubble follow-up:
+- Experimental liquid breach runoff withdrawn from menu and default disabled; previous persisted key no longer loads through option registry. Existing pool rendering and projectile splashes remain.
+- Inspected bundled original FluidWeapons.pk3 MRSmooth-code/Particles/Player.zsc MasterTick and MRSpawnParticle. Port emits at beforeTic position (equivalent of original Master.Prev); no additional position offset applied. Flare/trail sizes and 2/5-tic lifetimes retained.
+- Restored shared discrete color for each group of four rocket trail particles; square fire fade uses original Life-1 denominator. Grainy fire shader now uses brightness-preserving coverage instead of multiplying opacity twice. Soft glow option retained; rocket launch height/trajectory untouched.
+- New Environment / Blasts and rubble / Rocket voxel chunks toggle. Up to six tumbling 3D blocks per surface rocket impact, sampled wall color, capped at 48, gravity, solid-world collision/bounce, finite lifetime, cleared on disable.
+- Small radius <=4 cuts use round implicit shape; fracture smoothly returns at larger radii. Shared skin/mesh sampling remains coherent; underlying grid still imposes faceting. No save format change.
+- Root map-world suite passed including radial small-cut symmetry, seams and saves. Native impact suite passed including Fluid trail timing/color, no smoke, launch invariance, chunk color/count/movement/toggle, existing impact effects and disabled runoff.
+- Packaged release-rocket-voxel-chunks and updated release-standard; hashes match. Earlier builds retained. Not published to GitHub.
+
+2026-10-25: Fluid rocket source fidelity and chipped voxel chunks
+- Audited bundled RocketLauncher.zsc and Player.zsc; copies in fluid-rocket-audit.
+- Corrected textured particle half extent (2.5/7), Life-1 fade, discrete trail colors, flight spark velocity and lateral acceleration, impact spark lifetime/shrink/no-fade and distance scaling.
+- Removed invented world-space muzzle trail; original GunFlash sprite overlays remain.
+- User now permits original smoke: restored default Player.zsc impact smoke on tics 1..6, with original color, roll, velocity, growth and lifetime. Original default bitmask disables flight smoke.
+- Imported unmodified UZDoom 4.14.3 glpart.png for the soft rocket profile and impact smoke; grainy option remains available. Other projectile profiles unchanged.
+- Chunks now use connected chipped 3x3x3 voxel clusters, stable material variation, rotation and exposed-face rendering; existing 48-chunk cap, collision and toggle preserved.
+- Validation: native impact suite and doom-fluid-weapons-tests pass. New source-based assertions cover size/fade, shrinking impact sparks, impact smoke cadence and absence of invented muzzle emission. Captured launch, flight, trail and impact in E1M1; images in DERP Solid Maps Validation.
+- Packaged release-fluid-rocket-source-match and updated release-standard; hashes match 60C7BBFEFA40A5588448B2C22C5F1EC686BAA2A0987ECB889CC877BEFF126996. Prior packages retained.
+- LIMITATION: not a verified visual 1:1 reproduction. Grainy mode is a native approximation; reference renderer/settings have been requested. Original muzzle-smoke visual thinkers/heat accumulation and per-projectile age clock are not yet ported (spark cadence uses leveltime). No claim of complete original ZScript parity.
+2026-10-25 original MR_FluidWeapons-1.0-UZ (2).pk3 verified: rocket script identical after newline normalization; particle code/artwork identical. Original ParticleSmokeTexture=0 selects NSHSF0, corrected rocket impact smoke back to mask13. Native impact suite passed. Packaged release-fluid-original-pk3 and updated release-standard. Visual 1:1 limitations in preceding entry still apply.
+2026-10-26: Removed hard-coded pre-broken E1M1 window at (1360,-3152) from Game_BrokenWindows. Cosmetic windows now start whole; other authored atmosphere remains. Fresh E1M1 test with authored_episodes=1 and window_glass=1 verifies all six panes intact, then height filtering, progressive three-hit fracture and instant-break option. Build and native glass checks passed (gameplay-test/glass-start-intact.log). Packaged release-glass-start-intact, updated release-standard, retained earlier builds.
+
+Oct26 menu: visible category sidebar; separate Destruction and Combat; clipped long labels, full selected title/details; dependency hints from option predicates; FluidWeapons/custom gloves, glass and breach dependencies. Child values retained. R resets selected item (no accidental reset-all); F10/click Discard; Esc/click Apply-close. Home/End navigation. Native menu dependency/discard/navigation checks passed and screenshots inspected. Broad impact/options regression passed. Standard launcher updated; previous release retained. No GitHub publish.
+
+Oct26 PS2-style filter: single persisted ps2_style toggle in Display / Retro look, default off, GPU renderer only. Texture-space 2x blocks with narrow transitions and distance fade, luminance lighting steps, reduced specular and mild warm/color quantization. Geometry and HUD unchanged. Shared CPU/shader uniform size updated to 400 bytes; all GPU shaders regenerated. Release and smoke build passed; native on/off config/default/dependency test passed; screenshots visually inspected. Restored world crop matched baseline pixel-for-pixel (HUD animation excluded). No new render passes. No measured performance claim. Packaged release-ps2-style and updated release-standard, SHA256 55B9BD53A86452F9A3C97811B9FD8F01FA908B04B6AED45D312E57593B27A3E3. Previous release retained; no GitHub publish.
+
+Oct26 glass support: revision-gated checks of actual excavation at two depths beneath sill. Two adjacent removed supports detach frame panes and remaining rims, spawning downward glass shards; detached panes no longer draw or reflect. No break from shots beneath intact material. Native support test (intact/distant cut/destroyed sill/one-time fracture) and existing glass height/progressive tests passed. Updated release-standard from release-glass-support. VoxelDoom 2.4 archive inspected: 530 KVX files plus VOXELDEF and ZScript; native support not yet added.
+
+2026-10-26: Native VoxelDoom and Romero rocket cheat
+- Launcher accepts VoxelDoom v2.4 as a selected add-on and passes a dedicated -voxeldoom argument. Pack is external, never bundled or auto-loaded.
+- Native KVX decoder, greedy surface meshes, Doom/Doom2 VOXELDEF mappings, actor animation/yaw, indexed palette, sector/static/dynamic lighting and detected glowing-eye surfaces. Credits: Cheello for VoxelDoom assets.
+- F4 Bundled mods reports VoxelDoom detected/not loaded, with dependent voxel model and eye toggles. Missing model frames use sprites.
+- This is native model support, not execution of the pack's ZScript. Sprite-specific wound/deformation effects are not applied to voxel meshes. Large crowds have not been performance-profiled; model loading can increase map startup time.
+- Type johnromerogod during single-player play to toggle sticky rockets. Wall hits wait about half a second then explode into 25 outward-firing rockets. Children are permanently tagged nonrecursive. Floors/ceilings and direct actor hits retain ordinary impacts. Multiplayer/demo playback/recording excluded.
+- Verification: Release engine and smoke harness compile; all 312 Doom1 and 520 Doom2 frames decoded, malformed KVX rejected; GPU scene inspected including corrected facing and glowing eyes. Launcher detection/routing/no-pack tests passed. Menu dependencies and rendering passed without pack. Cheat typed on/off/on, disabled/floor gates, stationary fuse, exact 25 children and recursion rejection passed.
+- Local release-standard updated; previous release-glass-support retained. No GitHub publication in this change.
+
+2026-10-26 follow-up: voxel workload and drunk rocket alternate fire
+- Reject voxel faces pointing away from each render camera before CPU vertex transformation/upload; preserves silhouettes and eye masks. Prepares palette textures with model preload instead of on first visible frame. GPU scene visually checked after culling; no quantified frame-time claim yet.
+- With johnromerogod on and rocket launcher equipped, right mouse sends an alternate-fire command and suppresses the usual auxiliary weapon action. Fire choice is latched for the launcher wind-up. Costs one rocket per burst and uses normal launcher cadence.
+- Alternate shot creates 25 full-circle randomly directed rockets at the normal 32-unit launch height, with bounded randomized steering every three tics. Persistent missile counters distinguish these from ordinary burst children; neither kind can multiply again.
+- Release build and native tests pass: 25 drunk children, varied directions, nonrecursive guard, previous sticky fuse/count/toggle tests. Voxel GPU scene still passes and looks intact. Older release-voxel-romero retained.
+
+2026-10-26: textured voxel surfaces and forward rocket launch
+- Voxel meshing now merges coplanar adjacent cells regardless of color, storing original palette indices and eye masks in per-model nearest-filtered atlases. Geometry/silhouettes retain original voxel resolution; color boundaries no longer require individual quads. Back-face CPU culling retained.
+- Complete Doom1 mesh count reduced 4,293,556 -> 2,194,129 faces; Doom2 6,874,408 -> 3,281,975. This trades extra texture storage for fewer transformed/uploaded vertices. Cache now 177 MB Doom1 / 282 MB Doom2 in all-frame decoder test. No measured FPS claim for user's 42 FPS location.
+- Drunk alternate-fire rockets all initially follow player yaw at the normal height, with zero vertical velocity, holding straight for 17 tics before randomized steering. 25 count and nonrecursive markers unchanged.
+- Release build, Doom1 and Doom2 full decode/GPU smoke, malformed asset rejection, rocket forward launch/count and prior sticky tests passed. Close-up visually inspected. Packaged release-voxel-atlas and copied to release-standard; older builds preserved.
+
+2026-10-26: Romero aim and popup
+- Right-click burst uses normal free-look pitch sin/cos, keeping muzzle height, initial 17-tic straight flight, and 25 nonrecursive children.
+- Typing johnromerogod triggers supplied screaming_doomguy.png (embedded unchanged with transparency): 0.15-second rise, heavy shake, accelerating shrinking flight to a randomly selected upper corner, total 1.25 seconds. Existing Toasty voice plays once per trigger. No asset-file dependency for packaged build.
+- Release and native tests passed: upward momentum, initial straight fuse, burst counts/nonrecursion; popup screenshots inspected in shake/flight phases; audio trace confirmed Toasty playback.
+- Packaged release-romero-popup. Earlier releases retained.

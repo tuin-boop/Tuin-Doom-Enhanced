@@ -308,9 +308,9 @@ boolean P_Move (mobj_t*	actor)
 	{
 	    // must adjust height
 	    if (actor->z < tmfloorz)
-		actor->z += FLOATSPEED;
+		actor->z += P_FluidFloatSpeed(actor);
 	    else
-		actor->z -= FLOATSPEED;
+		actor->z -= P_FluidFloatSpeed(actor);
 
 	    actor->flags |= MF_INFLOAT;
 	    return true;

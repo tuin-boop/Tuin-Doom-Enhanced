@@ -83,6 +83,17 @@ int main(){try{
         }
         check(w==4?expansion:casing,"firing casing or rocket expansion missing");
     }
+    {
+        doomfluid::Weapons rocket;rocket.reset(4);rocket.shot(4);
+        rocket.tick(4);auto flash=rocket.layers(1).back().transform;
+        for(int tic=2;tic<10;++tic){
+            rocket.tick(4);auto layers=rocket.layers(1);const auto &fire=layers.front();
+            check(fire.sprite.rfind("MI1F",0)==0,"rocket fire expansion missing");
+            check(std::abs(fire.transform.x-flash.x)<.001f&&std::abs(fire.transform.y-flash.y)<.001f,
+                  "rocket fire followed launcher recoil instead of source flash position");
+            check(fire.transform.rotation==0,"rocket fire inherited launcher rotation");
+        }
+    }
     for(bool reload:{false,true}){
         doomfluid::Weapons c;c.reset(8);int load=0,close=0;bool shells=false,catchHand=false,split=false;int catchTick=-1;
         for(int tic=0;tic<150;++tic){

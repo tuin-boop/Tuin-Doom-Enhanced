@@ -742,6 +742,9 @@ void M_SaveGame (int choice)
 //
 char    tempstring[80];
 
+// DERP: off, quicksave and quickload act without asking (F4 panel).
+boolean quickconfirm = true;
+
 void M_QuickSaveResponse(int ch)
 {
     if (ch == 'y')
@@ -768,6 +771,11 @@ void M_QuickSave(void)
 	M_ReadSaveStrings();
 	M_SetupNextMenu(&SaveDef);
 	quickSaveSlot = -2;	// means to pick a slot now
+	return;
+    }
+    if (!quickconfirm)
+    {
+	M_QuickSaveResponse('y');
 	return;
     }
     sprintf(tempstring,DEH_String (QSPROMPT),savegamestrings[quickSaveSlot]);
@@ -800,6 +808,11 @@ void M_QuickLoad(void)
     if (quickSaveSlot < 0)
     {
 	M_StartMessage(DEH_String (QSAVESPOT),NULL,false);
+	return;
+    }
+    if (!quickconfirm)
+    {
+	M_QuickLoadResponse('y');
 	return;
     }
     sprintf(tempstring,DEH_String (QLPROMPT),savegamestrings[quickSaveSlot]);

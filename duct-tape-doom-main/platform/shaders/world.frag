@@ -59,7 +59,12 @@ layout(std140,set=3,binding=2) uniform Fog FOG_BLOCK;
 // blend: the crossfade toward the animation's next frame. weaponProbe, for
 // the relit weapon only: what it sees ahead, behind, right, left, up and
 // down in the view's frame (rgb; weaponProbe in scene3d/weapon.cpp).
-layout(std140,set=3,binding=3) uniform Blend { float blend; vec4 weaponProbe[6]; vec4 liquidFrame; vec4 liquidCycle; };
+// frameMean, cycleMean: a liquid flat's average color at this crossfade and
+// over its whole animation; cycleMean.a is the contrast it keeps far away,
+// 0 for everything that is not a liquid (surfaceBinding in scene3d/scene.cpp).
+// frameMean.a is 1 on ice floors (iceFlat): deep grooves, glassy shine;
+// worn plates add 16 to it (wornPlate in scene3d/scene.cpp).
+layout(std140,set=3,binding=3) uniform Blend { float blend; vec4 weaponProbe[6]; vec4 frameMean; vec4 cycleMean; };
 layout(location=0) out vec4 outColor;
 #define BLOCKERS
 #include "indexed.glsl"
@@ -73,6 +78,7 @@ layout(location=0) out vec4 outColor;
 #include "world/sector_light.glsl"
 #include "world/caustics.glsl"
 #include "world/shore.glsl"
+#include "world/wear.glsl"
 #include "world/weapon.glsl"
 #include "world/mirror.glsl"
 // The classic flashlight's light, gathered apart from pulse (classicBeam).
@@ -83,6 +89,8 @@ vec3 addedLight=vec3(0);
 // What the baked lamps and their bounce add to walls and flats, for the
 // saturation lift alone.
 vec3 lampLight=vec3(0);
+// A worn plate's grime at this texel (plateGrime), -1 on everything else.
+float plateWear=-1.0;
 #include "world/sprite_light.glsl"
 #include "world/surface_light.glsl"
 void main() {
@@ -108,8 +116,9 @@ void main() {
     if(!sprite&&(vMode&MODE_FACET_NORMAL)!=0u)
         normal=normalize(vec3(float(vStatic&1023u),float((vStatic>>10u)&1023u),float((vStatic>>20u)&1023u))/511.5-1.0);
     if(dot(normal,c.eye.xyz-vWorld)<0.0) normal=-normal;
-    // MODE_BLOOD: blood decals. vTint carries wetness (shine) and how far the
-    // color has darkened while drying.
+    // MODE_BLOOD: blood decals. vTint carries wetness (shine), how far the
+    // color has darkened while drying, and the rain on it (blood.cpp
+    // rainWash): its pale step (0-4) times two plus how much is washed away.
     bool blood=(vMode&MODE_BLOOD)!=0u;
     uint bakeFlags=uint(c.flashlightTint.w);
     // FEATURE_GLOSSY_SCREENS: monitor glass in computer textures. Its curved CRT dome
@@ -117,16 +126,17 @@ void main() {
     // enlarges the picture's middle slightly (edges still meet the rim).
     bool glassy=!sprite&&!blood&&(bakeFlags&FEATURE_GLOSSY_SCREENS)!=0u&&c.effects.z==0.0&&isGlass(vUV);
     vec3 screenNormal=normal;vec2 screen=vec2(0),uv=vUV;
-    bool dead=(vMode&MODE_DEAD_GLOW)!=0u;
-    bool unpowered=(vMode&MODE_LAMP_OFF)!=0u;
+    bool dead=!sprite&&(vMode&MODE_DEAD_GLOW)!=0u;
+    bool unpowered=!sprite&&(vMode&MODE_LAMP_OFF)!=0u;
     float crack=0.0;
     if(glassy) {
         vec2 origin,extent;screen=glassScreen(vUV,origin,extent);
         vec3 tangent,bitangent;textureFrame(normal,dp1,dp2,duv1,duv2,tangent,bitangent);
-        if(dead) {
+        if(dead&&(vMode&MODE_LAMP_OFF)==0u) {
             // MODE_DEAD_GLOW: a shot-out screen's glass lies broken, no
             // longer a lens: cracked into shards that each lean their own
-            // way and so catch light apart.
+            // way and so catch light apart. One its blinking sector only
+            // switched off (MODE_LAMP_OFF) goes dark behind whole glass.
             uint shard,seed=vStatic*0x9e3779b9u^(vMode>>MODE_SECTOR_SHIFT);
             crack=glassCracks(vUV,origin,extent,seed,shard);
             uint h=tileHash(ivec2(int(shard),1),seed);
@@ -138,8 +148,23 @@ void main() {
             uv=clamp(origin+(lensed*0.5+0.5)*extent,origin+0.5,origin+extent-0.5);
         }
     }
+    // MODE_STAINED_GLASS: leaded stained glass, shaded like a shot-out
+    // screen's broken glass. Its colored panes (the glow mask) are the
+    // shards; each leans its own way (the leaded relief, withLeadedRelief)
+    // and so takes its own highlights and sheen; the lead stays a matte wall.
+    if(!sprite&&!glassy&&(vMode&MODE_STAINED_GLASS)!=0u&&(bakeFlags&FEATURE_GLOSSY_SCREENS)!=0u&&c.effects.z==0.0&&
+       maskAt(image,vUV,false)>0.0) {
+        vec3 tangent,bitangent;textureFrame(normal,dp1,dp2,duv1,duv2,tangent,bitangent);
+        vec2 lean=(texelFetch(relief,wrapTexel(ivec2(floor(vUV)),textureSize(relief,0)),0).rg*255.0-128.0)/127.0;
+        screenNormal=normalize(normal+lean.x*tangent+lean.y*bitangent);
+        glassy=true;
+    }
+    // FEATURE_LIVE_READOUTS: LED readouts change their cells (readoutCell);
+    // a shot-out panel's stay dark and still.
+    if(!sprite&&!blood&&!glassy&&!dead&&(bakeFlags&FEATURE_LIVE_READOUTS)!=0u&&c.effects.z==0.0)
+        uv=readoutCell(uv,vStatic);
     vec4 color;
-    if(sprite) color=indexed(image,palette,uv,c.effects.w==1.0,false);
+    if(sprite) color=indexed(image,palette,uv,(vMode&MODE_VOXEL)==0u&&c.effects.w==1.0,false);
     else if((vMode&MODE_ROCK)!=0u) {
         // Shared world coordinates and interpolated field-gradient weights:
         // adjacent triangles sample the same stone rather than separate UV islands.
@@ -152,22 +177,42 @@ void main() {
              +surfaceTexture(image,p.xy,px.xy*.75,lod)*weights.z;
     }
     else color=surfaceTexture(image,uv,texelPixel,lod);
+    if(!sprite&&(vMode&MODE_ROCK)!=0u)color.rgb*=unpackUnorm4x8(vLampTint).rgb;
     // Animated flats and walls crossfade toward their next frame.
     if(blend>0.0) color=mix(color,surfaceTexture(nextImage,uv,texelPixel,lod),blend);
+    // Big pools: with distance the liquid's artwork fades into detail on a
+    // steady average color, its contrast kept down to cycleMean.a, so far
+    // water reads as one body instead of a tiled floor and no longer pulses
+    // as the frames change. Grazing views fade it sooner. poolTone varies
+    // the whole body a little across calm and rough stretches.
+    if(!sprite&&cycleMean.a>0.0&&c.effects.z==0.0) {
+        float facing=abs(normalize(c.eye.xyz-vWorld).z);
+        float reach=vDistance*mix(2.5,1.0,saturate(facing*2.5));
+        float detail=mix(1.0,cycleMean.a,smoothstep(192.0,1024.0,reach));
+        color.rgb=max(cycleMean.rgb+(color.rgb-frameMean.rgb)*detail,vec3(0))*poolTone(vWorld.xy);
+    }
     // Screen overlays do not use the sun atlas. sunU=-2 marks an explicit
     // overlay opacity in sunV, including soft PNG edges and fading flashes.
     bool overlayOpacity=sprite&&(vMode&MODE_SCREEN)!=0u&&vSun.x==-2.0;
     if(color.a<(overlayOpacity?0.001:0.45)) discard;
+    // Blood the rain washes away goes texel by texel.
+    float bloodStep=blood?floor(vTint.b*0.5+0.001):0.0,bloodPale=bloodStep*0.25,bloodWash=blood?max(vTint.b-bloodStep*2.0,0.0):0.0;
+    if(bloodWash>0.0&&float(tileHash(ivec2(floor(vUV)),0x2f6b9d1eu)&255u)/255.0<bloodWash) discard;
 #ifdef COVERAGE
     // Depth comes from the rasterizer, per sample like the shading pass.
     outColor=color;return;
 #endif
+    // Wounds keep the sprite's coverage and silhouette normals, but their
+    // blood has its own palette color even over dark clothing. A thin outer
+    // stain blends into the artwork; the torn rim replaces it.
     if(wound) {
         uint index=(vMode>>MODE_WOUND_PALETTE_SHIFT)&255u;
         vec3 paint=texelFetch(palette,ivec2(int(index),0),0).rgb;
         color.rgb=(vMode&MODE_WOUND_STAIN)!=0u?mix(color.rgb,paint,0.7):paint;
     }
-    if(blood) color.rgb*=vTint.g;
+    // Rained on, blood pales: its red fades toward a dull grey of its own
+    // brightness, never lighter (lighter reds would read pink).
+    if(blood) color.rgb=mix(color.rgb,vec3(dot(color.rgb,vec3(0.299,0.587,0.114)))*vec3(1.0,0.92,0.86),bloodPale*0.6)*vTint.g;
     // The thick rim of the glass shades the picture's edges, in light steps.
     if(glassy) color.rgb*=round((1.0-0.5*smoothstep(0.7,1.0,max(abs(screen.x),abs(screen.y))))*16.0)/16.0;
     // A dead screen shows nothing but the dark tube behind the glass, and its
@@ -181,6 +226,11 @@ void main() {
     vec3 bakeNormal=!sprite&&(vMode&MODE_EXCAVATED_FLAT)!=0u?vec3(0,0,normal.z<0.0?-1.0:1.0):normal;
     SectorLit lit=sectorLighting(bakeNormal,mapped,sector,bakeFlags);
     float light=lit.light;
+    // Weather and wear (world/wear.glsl): streaks and wet ground.
+    Wear wear=Wear(0.0,0.0,false,0.0,0.0);
+    if(mapped&&!blood&&!glassy&&cycleMean.a==0.0) wear=surfaceWear(vWorld,normal,sector,bakeFlags);
+    // Worn plates (frameMean.a 16 and up, wornPlate in scene3d/scene.cpp).
+    if(mapped&&!blood&&!glassy&&frameMean.a>=15.5) {wear.grime=plateGrime(vUV,vWorld,normal,sector,vStatic);plateWear=wear.grime;}
     // Grounding: things resting on the floor darken over their lowest 24
     // units in colormap-like 1/16 steps; vSun holds strength and height.
     float grounding=1.0;
@@ -200,7 +250,7 @@ void main() {
     // light counts too (c.bake.w weights it), so corners the lamps reach only
     // by bounce take their color, not the flat level's grey. Sprites and the
     // weapon bring theirs from the CPU (lampTint in baked_lighting.h).
-    vec3 lampTint=unpackUnorm4x8(vLampTint).rgb;
+    vec3 lampTint=!sprite&&(vMode&MODE_ROCK)!=0u?vec3(1):unpackUnorm4x8(vLampTint).rgb;
     if(mapped&&c.bake.x>0.0&&c.effects.z==0.0) {
         vec3 colored=lit.baked.rgb+lit.bounce*c.bake.y*c.bake.w;float peak=max(colored.r,max(colored.g,colored.b));
         if(peak>0.0) lampTint=mix(vec3(1),colored/peak,peak/(peak+lit.shown)*bakeOverloadScale(colored));
@@ -246,14 +296,13 @@ void main() {
         vec2 at=c.effects.x==2.0?sharpen(uv,texelPixel+c.texFilter.x):uv;
         emission=maskAt(image,at,c.effects.x>0.0);
         if(blend>0.0) emission=mix(emission,maskAt(nextImage,at,c.effects.x>0.0),blend);
-        // A glowing or fire-flickering sector's lamps fade with it (vLampTint alpha, lampGlow).
-        emission*=unpackUnorm4x8(vLampTint).a;
         // MODE_DEAD_GLOW: a shot-out lamp or screen. What glowed is a dead,
         // dark tube or screen; the housing around it keeps its shading.
         if(dead||unpowered) {
             if(!glassy) color.rgb=mix(color.rgb,vec3(dot(color.rgb,vec3(0.299,0.587,0.114))*0.15),emission);
             emission=0.0;
         }
+        emission*=unpackUnorm4x8(vLampTint).a;
         emission=max(emission,edgeGlow);
         illumination=max(illumination,vec3(emission));
     }
@@ -263,6 +312,15 @@ void main() {
         vec3 stain;
         float damp=shoreWet(vWorld,normal,sector,dot(color.rgb,vec3(0.299,0.587,0.114)),stain)*(1.0-emission);
         if(damp>0.0) color.rgb*=mix(vec3(1),vec3(0.55)*mix(vec3(1),stain,0.25),damp);
+    }
+    color.rgb=applyWear(color.rgb,wear,emission);
+    // Quantize illumination rather than albedo: the artwork keeps its colors.
+    // Use shared luminance steps to avoid colored bands around moving lights.
+    if(c.style.x>0.0&&c.effects.z==0.0&&(vMode&MODE_SOFT)==0u) {
+        float luma=dot(illumination,vec3(0.299,0.587,0.114));
+        float stepped=floor(luma*12.0+0.5)/12.0;
+        illumination*=mix(luma,stepped,0.72)/max(luma,0.001);
+        specular*=0.65;
     }
     vec3 albedo=color.rgb;
     color.rgb=color.rgb*illumination;
@@ -278,11 +336,12 @@ void main() {
     // channels the texel lacks: light it already reflects (a blue lamp on
     // blue carpet) the multiply has counted.
     vec3 lacking=1.0-albedo/max(max(albedo.r,max(albedo.g,albedo.b)),0.001);
-    vec3 lampSpill=c.effects.z==0.0&&!sprite?lampLight*lacking*chroma*0.6*(1.0-emission):vec3(0);
+    // Blood keeps its own pure red: spilled light would pale it to pink.
+    vec3 lampSpill=c.effects.z==0.0&&!sprite&&!blood?lampLight*lacking*chroma*0.6*(1.0-emission):vec3(0);
     color.rgb+=lampSpill;
     if(c.effects.z==0.0&&!sprite&&any(greaterThan(addedLight,vec3(0)))) {
         // Dynamic light: the flashlight, shots, fireballs.
-        color.rgb+=addedLight*chroma*0.6*(1.0-emission);
+        if(!blood) color.rgb+=addedLight*chroma*0.6*(1.0-emission);
         // What it adds rolls off on bright texels, as an eye or camera keeps
         // a hotspot from blowing out: a bright wall in the beam no longer
         // jumps far ahead of the dark floor beside it. Dark texels and the
@@ -303,6 +362,12 @@ void main() {
     if(sprite&&(bakeFlags&(FEATURE_CAUSTICS|FEATURE_CAUSTICS_SPRITES))==(FEATURE_CAUSTICS|FEATURE_CAUSTICS_SPRITES)&&(vMode&(MODE_SCREEN|MODE_SOFT))==0u&&c.effects.z==0.0)
         color.rgb+=albedo*(1.0-emission)*caustics(vWorld,normal,0u,true)*2.5;
     if((vMode&MODE_MIRROR_FLOOR)!=0u&&c.water.z>0.0&&c.effects.z==0.0) liquidMirror(color,albedo);
+    // Outdoor haze (c.haze, Game_Sun): surfaces under open sky fade toward
+    // the sky's horizon color with distance, so far walls meet the sky.
+    if(mapped&&c.haze.w>0.0&&(vMode&MODE_SCREEN)==0u&&sectorInfo[sector].w>0.0) {
+        float open=1.0-outdoorShape(sector).x;
+        color.rgb=mix(color.rgb,c.haze.rgb*c.fx.x,open*c.haze.w*0.6*(1.0-exp(-max(vDistance-256.0,0.0)/1400.0)));
+    }
     if((vMode&MODE_SCREEN)==0u) {
         vec4 fog=fogAlong(vWorld);
         color.rgb=color.rgb*fog.a+fog.rgb;
@@ -311,6 +376,11 @@ void main() {
     if(c.effects.z==0.0) color.rgb*=c.fx.x;
     if(c.effects.z==32.0) color.rgb=1.0-color.rgb;
     if((vMode&MODE_FUZZ)!=0u) {color.rgb*=0.3;color.a=0.65;}
+    if(c.style.x>0.0&&c.effects.z==0.0&&(vMode&MODE_SOFT)==0u) {
+        // Gentle warm finish and 6-bit-like color detail; no scanlines or blur.
+        color.rgb*=vec3(1.025,1.0,0.965);
+        color.rgb=mix(color.rgb,floor(color.rgb*63.0+0.5)/63.0,0.55);
+    }
     if(c.effects.y>0.0) {
         color.rgb*=0.88+0.12*sin(gl_FragCoord.y*3.14159265);
         color.rgb=floor(color.rgb*31.0+0.5)/31.0;
@@ -334,10 +404,11 @@ void main() {
 #else
     // Mirror pass (water = plane,0,0,1): alpha holds how near the point is
     // to the liquid surface along the mirrored ray, sharp within a step's
-    // height, gone a couple of storeys up. Blended geometry keeps it.
+    // height, gone a couple of storeys up (clear water, c.eye.w: a whole
+    // hall up). Blended geometry keeps it.
     if(c.water.z==0.0&&c.water.w>0.0) {
         float along=max(vWorld.z-c.water.x,0.0)/max(abs(normalize(vWorld-c.eye.xyz).z),0.05);
-        color.a=1.0-smoothstep(16.0,256.0,along);
+        color.a=1.0-smoothstep(16.0,mix(256.0,1024.0,c.eye.w),along);
     }
 #endif
     if(overlayOpacity) color.a*=clamp(vSun.y,0.0,1.0);

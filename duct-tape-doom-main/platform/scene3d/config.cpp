@@ -10,6 +10,7 @@ void loadSettings() {
     FILE *file=fopen(graphicsConfig,"r"); if(!file) return;
     char key[64];float value;
     while(fscanf(file,"%63s %f",key,&value)==2) readOption(settings,key,value);
+    finishReading(settings);
     fclose(file);
 }
 static void saveSettings() {

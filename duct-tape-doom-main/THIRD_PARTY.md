@@ -1,6 +1,6 @@
 # Third-party code and data
 
-Duct-Tape DOOM is licensed under the GNU General Public License, version 3
+DERP is licensed under the GNU General Public License, version 3
 ([`LICENSE.TXT`](LICENSE.TXT)), with the attribution term in
 [`NOTICE.txt`](NOTICE.txt). This file lists everything in the game that
 comes from elsewhere, and its license.
@@ -8,6 +8,7 @@ comes from elsewhere, and its license.
 | Part | Where | License |
 | --- | --- | --- |
 | DOOM source code, id Software | `linuxdoom-1.10/`, the base of the engine | GPL 2 or later, used here under GPL 3 |
+| Heretic source code, Raven Software / Activision | `heretic/`, the base of the Heretic program | GPL 2, read as "2 or later" (see below), used here under GPL 3 |
 | [SDL](https://libsdl.org/) 3.4.18 | downloaded by `CMakeLists.txt`, linked into the program | zlib, with the notices in [`third_party/SDL3-NOTICES.txt`](third_party/SDL3-NOTICES.txt) |
 | [Nuked OPL3](https://github.com/nukeykt/Nuked-OPL3), Nuke.YKT | downloaded by `CMakeLists.txt`, linked into the program | GNU LGPL 2.1 or later |
 | [TinySoundFont](https://github.com/schellingb/TinySoundFont), Bernhard Schelling | downloaded by `CMakeLists.txt`, linked into the program | MIT |
@@ -20,9 +21,24 @@ later version" (`doomsrc.zip` in the idgames archive, `source/`). This copy
 started from id's GitHub repository, whose headers still named the 1997
 "DOOM Source Code License"; they now carry the 1999 notice again.
 
+**Heretic source.** Raven Software released the Heretic and Hexen source in
+January 1999 under a restrictive license, and re-released it under the GPL on
+4 September 2008. This copy comes from `ravensrc.zip` in the idgames archive,
+`source/` (SHA-256 `e38cadabaf6fcc3c033bd383776b95f8937010b2a8759a57bf105139b4a94282`),
+the preserved copy of Raven's SourceForge upload. Its wording is short: the
+included `SourceReadme.txt` says "[edit 2 Sep 2008] The code is release under
+GNU GPLv2 (see LICENSE)", `LICENSE.txt` is the text of GPL version 2, and the
+source files have no license headers. Raven did not say "version 2 only",
+and the community has read the release as "version 2 or later" since 2008:
+the idgames description of the archive carries the "either version 2 of the
+License, or (at your option) any later version" notice, Chocolate Doom's
+Heretic and Hexen code is published under that notice, and GZDoom ships
+Raven-derived code under GPL 3. DERP follows that reading and uses
+the Heretic source under GPL 3.
+
 **SDL, Nuked OPL3, TinySoundFont and GeneralUser GS** are not in this
 repository; CMake downloads the pinned versions while building. Each release
-has a `DuctTapeDOOM-source.tar.gz` with this repository and the exact library
+has a `DERP-source.tar.gz` with this repository and the exact library
 sources and SoundFont the downloads were built from, so the game, with or
 without changes to those libraries, can be rebuilt without an internet
 connection (see `dependencies/README.txt` inside it).
@@ -60,3 +76,4 @@ Body reactions, varied deaths, procedural falls, sprite wounds, torch embers,
 shoreline effects and synthesized bullet flybys were integrated/adapted from
 the user-supplied derp-main.zip. The upstream license is retained in LICENSE.TXT.
 The newer glass implementation was not imported.
+

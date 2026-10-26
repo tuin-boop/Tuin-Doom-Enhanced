@@ -835,6 +835,9 @@ P_DamageMobj
     {
 	target->momx = target->momy = target->momz = 0;
     }
+
+    if (R_DamageHit)
+	R_DamageHit (target, inflictor, source, damage);
 	
     player = target->player;
     if (player && gameskill == sk_baby)

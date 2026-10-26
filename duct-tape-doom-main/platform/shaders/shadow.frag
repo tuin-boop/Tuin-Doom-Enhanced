@@ -30,6 +30,18 @@ void main() {
         alpha=step((float(2*(q.x^q.y)+q.y)+0.5)/4.0,spread);
     } else if((vMode&MODE_HARD_SILHOUETTE)!=0u) alpha=step(0.5,alpha);
     if(alpha<0.02) discard;
+    // Square rocket fire: retain translucent colour while breaking up the
+    // flat fill like the reference particle renderer. Screen-sized grain
+    // stays fine when the plume passes close to the camera.
+    if((vMode&4096u)!=0u){
+        vec2 q=floor(gl_FragCoord.xy);
+        float grain=fract(52.9829189*fract(dot(q,vec2(.06711056,.00583715))));
+        // Original square fire uses coverage stippling: bright surviving pixels,
+        // not a second opacity multiplier that turns the flame into pale haze.
+        alpha=step(grain,alpha*vLight);
+        if(alpha<.5)discard;
+        outColor=vec4(vTint,1);return;
+    }
     outColor=vec4(vTint,alpha*vLight);
 #else
     float softness=1.0;

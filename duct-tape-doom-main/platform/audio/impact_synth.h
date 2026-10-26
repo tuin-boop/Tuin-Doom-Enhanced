@@ -16,7 +16,7 @@ enum {
     IMPACT_GLASS_SHATTER,  /* the break alone, no shards falling */
     IMPACT_GLASS_BREAK,    /* the shatter, then shards landing */
     IMPACT_GLASS_BIG,      /* a longer shatter, a high pane's worth of shards */
-    IMPACT_GLASS_FRACTURE, /* a branching crack front, no shards falling */
+    IMPACT_GLASS_FRACTURE, /* a branching crack front, then its shards */
     IMPACT_GLASS_FRACTURE_BIG, /* a big pane's crack front, then its shards */
     IMPACT_STEP_STONE,     /* a footstep: heel and toe, a little grit */
     IMPACT_STEP_METAL,     /* with a faint ring of the plate */
@@ -24,12 +24,29 @@ enum {
     IMPACT_STEP_SOFT,      /* muffled, on grass, dirt and carpet */
     IMPACT_SPLASH_WATER,   /* a step in water */
     IMPACT_SPLASH_THICK,   /* a step in nukage, slime, blood or lava */
-    IMPACT_FLYBY,
+    IMPACT_RUN_STONE,      /* a running footfall: ball of the foot first, harder */
+    IMPACT_RUN_METAL,
+    IMPACT_RUN_WOOD,
+    IMPACT_RUN_SOFT,
+    IMPACT_GEAR_LIGHT,     /* kit jolted by a step: a padded bump, buckles */
+    IMPACT_GEAR_SLUNG,     /* a long gun knocking on its sling */
+    IMPACT_GEAR_HEAVY,     /* a heavy weapon thudding against the kit, rounds rattling */
+    IMPACT_GEAR_ARMOR,     /* armor: a hard click over a dull knock */
+    IMPACT_GEAR_LIGHT_RUN, /* the same four swung by a running step: more bump and collisions */
+    IMPACT_GEAR_SLUNG_RUN,
+    IMPACT_GEAR_HEAVY_RUN,
+    IMPACT_GEAR_ARMOR_RUN,
+    IMPACT_FLYBY,          /* a bullet whizzing past the player's head */
+    IMPACT_GORE_BURST,     /* a kill's wet burst, drops pattering down */
+    IMPACT_GORE_SLAP,      /* a body slapping into a floor or wall */
     IMPACT_KINDS
 };
 
 /* Short name for files and settings. */
 const char *Impact_Name(int kind);
+/* Native bank rate: glass keeps its bright collision detail at 22 kHz;
+   the other made-up effects retain DOOM's 11 kHz bandwidth. */
+int Impact_Rate(int kind);
 /* Frames the kind needs at the rate. */
 int Impact_Length(int kind, int rate);
 /* Adds the kind into out (mono, about -1..1). */
@@ -45,6 +62,23 @@ void Spark_Render(int kind, unsigned seed, int rate, float *out, int frames);
 void Glass_Render(int kind, unsigned seed, int rate, float *out, int frames);
 void Fracture_Render(int kind, unsigned seed, int rate, float *out, int frames);
 void Step_Render(int kind, unsigned seed, int rate, float *out, int frames);
+/* In flyby_synth.c. */
+void Flyby_Render(unsigned seed, int rate, float *out, int frames);
+/* In gore_synth.c. */
+void Gore_Render(int kind, unsigned seed, int rate, float *out, int frames);
+/* What one step plays: the footfall on the floor kind (IMPACT_STEP_ or
+   IMPACT_SPLASH_) and the kit rattling after it, each a kind at a level.
+   force: 0 walking, 1 running, up to 2 a hard landing. armor 0-2 and heft
+   (Game_WeaponHeft) say what the kit is. Returns how many, at most 3. */
+typedef struct { int kind; float level; } impact_layer_t;
+/* How much the kit's metal rings, 1 as made; for doom-sfx-render's
+   comparisons. Set before rendering. */
+void Step_SetGearRing(float amount);
+/* Alternative supported-metal contacts for offline auditioning. The game
+   keeps CURRENT until a replacement has been chosen. Set before rendering. */
+enum { STEP_METAL_CURRENT, STEP_METAL_FRICTION, STEP_METAL_TREAD };
+void Step_SetMetalStyle(int style);
+int Step_Layers(int floor, float force, int armor, int heft, impact_layer_t *layers);
 /* Count tiny bits still settling from start on, thinning out over a second. */
 void Glass_Debris(float *out, int frames, int rate, unsigned seed, float start, int count, float amp);
 /* Count shards let go over spread seconds from sill..sill+pane units above

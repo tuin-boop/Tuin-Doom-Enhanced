@@ -7,11 +7,15 @@
 // baked: the part of the light already in the bake maps (0: dynamic only).
 struct Flash { vec4 position; float strength; uint first,count; float baked; vec4 color,direction; };
 struct LightBlocker { vec4 line,opening; };
+// right.w: where the wear records start in the sector buffer (0: none);
+// forward.w, up.w: how wet the windows and the ground under the sky are.
+// mood: x how bright the sky is drawn, yzw its tint (the episode's mood, Game_Mood).
+// weather: x how hard it rains (0: dry), yz the wind blowing it (units/s).
 // fx: exposure, sky light tint; fx2: render-target pixels per Doom pixel,
 // sky light level (0: off), sun yaw, sun disc strength (0: off); texFilter:
 // sharp bilinear edge softness in texels, palette mipmaps (0: off);
 // flicker: the current light of the baked flicker groups, group 0 steady.
-#define CAMERA_BLOCK { vec4 eye,right,forward,up,projection,effects,materials,flashlightTint,fog,map,water,sun,bake,fx,fx2,texFilter; vec4 flicker[4]; }
+#define CAMERA_BLOCK { vec4 eye,right,forward,up,projection,effects,materials,flashlightTint,fog,map,water,sun,bake,fx,fx2,texFilter,outdoor,haze,mood,weather,style; vec4 flicker[4]; }
 #define FLASH_BLOCK { uint flashCount,flashReserved0,flashReserved1,flashReserved2; Flash lights[63]; }
 // count, then four light indices, then padding (see doom3d::FogLights).
 #define FOG_BLOCK { uvec4 fogA,fogB; }

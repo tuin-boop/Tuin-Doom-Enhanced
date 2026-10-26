@@ -42,7 +42,7 @@ internal static class Data {
     }
     internal static string Pk3Issue(string path) {
         if(!Path.GetExtension(path).Equals(".pk3",StringComparison.OrdinalIgnoreCase)) return null;
-        if(FluidPack(path)!=0)return null;
+        if(FluidPack(path)!=0||VoxelPack(path))return null;
         using(var zip=ZipFile.OpenRead(path)) {
             string[] features={"ZSCRIPT","DECORATE","GLDEFS","MAPINFO","ZMAPINFO","VOXELDEF","MODELDEF","TEXTURES","SNDINFO","SNDSEQ","ANIMDEFS","SBARINFO","MENUDEF","CVARINFO","LOADACS","GAMEINFO"};
             foreach(var e in zip.Entries) {
@@ -63,10 +63,18 @@ internal static class Data {
         if(hash=="E906D93E31D30CDB25DB6965E2EB8EA9F3A7D2D1AAF635BAB8231ABA80C259DC")return 3;
         return 0;
     }
+    internal static bool VoxelPack(string path) {
+        if(!Path.GetExtension(path).Equals(".pk3",StringComparison.OrdinalIgnoreCase))return false;
+        using(var zip=ZipFile.OpenRead(path)) {
+            var names=new HashSet<string>(zip.Entries.Select(e=>e.FullName.ToLowerInvariant()));
+            return names.Contains("voxeldef.txt")&&names.Contains("voxels/possa.kvx")&&names.Contains("zscript/cheellovox/cheellomonstersdoom1.zc");
+        }
+    }
     internal static string Arguments(string game,string[] files) {
-        var classic=new List<string>();var sounds=new List<string>();string fluid=null;bool monsters=false;
+        var classic=new List<string>();var sounds=new List<string>();string fluid=null,voxels=null;bool monsters=false;
         foreach(string f in files){
             if(!File.Exists(f))throw new IOException("Missing add-on: "+f);
+            if(VoxelPack(f)){if(voxels!=null)throw new IOException("Choose only one VoxelDoom pack.");voxels=f;continue;}
             int pack=FluidPack(f);
             if(pack==1){if(fluid!=null)throw new IOException("Choose only one Fluid Weapons main pack.");fluid=f;sounds.Add(f);}
             else if(pack==2){if(fluid==null)throw new IOException("Place Fluid Weapons 1.0-UZ above its sound add-on in the list.");sounds.Add(f);}
@@ -76,6 +84,7 @@ internal static class Data {
                 classic.Add(f);}
         }
         string args="-solidmaps -uzmovement -iwad "+Quote(game);
+        if(voxels!=null)args+=" -voxeldoom "+Quote(voxels);
         if(monsters)args+=" -fluidmonsters";
         if(classic.Count>0)args+=" -file "+String.Join(" ",classic.Select(Quote));
         if(fluid!=null)args+=" -fluidweapons "+Quote(fluid)+" -modsounds "+String.Join(" ",sounds.Select(Quote))+" -fluid-sounds -weaponinterpolation";
@@ -186,7 +195,7 @@ internal sealed class Launcher : Form {
         Button("Add files...",610,204,108,()=>{using(var d=new OpenFileDialog { Filter="Doom add-ons (*.wad;*.pk3)|*.wad;*.pk3",Multiselect=true }) if(d.ShowDialog()==DialogResult.OK) Add(d.FileNames);});
         Button("Remove",610,243,108,()=>{int i=mods.SelectedIndex;if(i>=0)mods.Items.RemoveAt(i);});
         Button("Move up",610,282,108,()=>MoveMod(-1)); Button("Move down",610,321,108,()=>MoveMod(1));
-        Label("Other PK3s: classic resources and WAD maps. General ZScript is not supported.",20,363,700,45);
+        Label("VoxelDoom supported: models and native lighting. Other PK3 scripts are not supported.",20,363,700,45);
         status.SetBounds(20,421,520,35); status.Text="Ready"; Controls.Add(status);
         play=Button("Play",610,417,108,Play);
         foreach(Control control in Controls)control.Top+=140;

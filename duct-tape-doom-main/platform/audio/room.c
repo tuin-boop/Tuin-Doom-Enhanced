@@ -13,10 +13,13 @@
 #include "p_local.h"
 #include "r_data.h"
 #include "w_wad.h"
+#include "z_zone.h"
 #include "map.h"
+#include "relief.h"
 #include "room.h"
+#include "../game_materials.h"
 
-#define RAYS 32
+#define RAYS ROOM_RAYS
 #define SPEED 10700.0f  /* sound, in map units per second (a unit is ~3.2 cm) */
 #define METERS 0.032f
 #define EAR 41.0f       /* the listener's ear above their feet */
@@ -24,56 +27,60 @@
 
 extern int numtextures, numflats;
 
-/* absorb: share of sound a bounce loses; dark: how much of its treble. */
-typedef struct { float absorb, dark; } material_t;
-static const material_t metal = {0.06f, 0.15f}, stone = {0.10f, 0.45f}, wood = {0.22f, 0.70f},
-    flesh = {0.30f, 0.80f}, liquid = {0.03f, 0.30f}, soil = {0.40f, 0.75f}, open_air = {1, 0};
+/* absorb: share of sound a bounce loses; dark: how much of its treble;
+   scatter: how rough it is to sound, as roughness is to light - smooth
+   panels send an echo back clean and keep the room ringing, rough stone
+   and dirt spread it and the room goes flat. Open air sends nothing back
+   whole. seams: the seam share (relief.h) typical of the class's artwork
+   in the IWADs; a texture with more raises its scatter by as much, so ribbed
+   metal rings less than sheet metal and rubble less than plain blocks. Fewer
+   seams never lower it: the reading misses some joints, and a smooth room
+   ringing harder than its class wears on the ear. Liquids and open air have
+   no relief. */
+typedef struct { float absorb, dark, scatter, seams; } material_t;
+static const material_t metal = {0.06f, 0.15f, 0.10f, 0.15f}, stone = {0.10f, 0.45f, 0.65f, 0.18f},
+    wood = {0.22f, 0.70f, 0.45f, 0.18f}, flesh = {0.30f, 0.80f, 0.70f, 0.25f}, liquid = {0.03f, 0.30f, 0.05f, -1},
+    soil = {0.40f, 0.75f, 0.85f, 0.25f}, fabric = {0.35f, 0.90f, 0.85f, 0.22f}, open_air = {1, 0, 1, -1};
+#define RELIEF_REACH 0.25f  /* the most a texture's relief raises its class's scatter */
 
-static int prefixed(const char *name, const char *const *list)
+/* What the game's texture and flat names say they are made of
+   (game_materials.h); names that match nothing sound like stone. */
+static material_t surface_material(game_surface surface)
 {
-    for (; *list; ++list)
+    switch (surface)
     {
-        size_t i = 0;
-        while ((*list)[i] && toupper((unsigned char)name[i]) == (*list)[i]) ++i;
-        if (!(*list)[i]) return 1;
+    case GAME_SURFACE_METAL: return metal;
+    case GAME_SURFACE_WOOD: return wood;
+    case GAME_SURFACE_FLESH: return flesh;
+    case GAME_SURFACE_SOIL: return soil;
+    case GAME_SURFACE_LIQUID: return liquid;
+    case GAME_SURFACE_FABRIC: return fabric;
+    default: return stone;
     }
-    return 0;
 }
-/* The IWADs' texture families; PWAD names that match none sound like stone. */
-static material_t wall_material(const char *name)
+static material_t wall_material(const char *name) { return surface_material(Game_WallSurface(name)); }
+static material_t flat_material(const char *name) { return surface_material(Game_FlatSurface(name)); }
+
+/* A material with a texture's own relief: seams is its seam share, or -1. */
+static material_t with_relief(material_t m, float seams)
 {
-    static const char *const metals[] = {"STARTAN", "STARG", "STARBR", "COMP", "METAL", "SUPPORT",
-        "SHAWN", "DOOR", "BIGDOOR", "EXITDOOR", "LITE", "PIPE", "PLAT", "TEKWALL", "TEKGREN", "TEKLITE",
-        "SLADWALL", "SILVER", "BRONZE", "SPACEW", "NUKE", "SW1", "SW2", "STEP", "MIDGRATE", "MIDBARS",
-        "ICKDOOR", "ICKWALL", "TEKBRON", "BROWNPIP", NULL};
-    static const char *const woods[] = {"WOOD", "PANEL", "PANBOOK", "PANBORD", "PANCASE", NULL};
-    static const char *const fleshes[] = {"SKIN", "SKSNAKE", "SKSPINE", "SP_FACE", "FLESH", "SLOPPY", "SPCDOOR", NULL};
-    if (prefixed(name, woods)) return wood;
-    if (prefixed(name, fleshes)) return flesh;
-    if (prefixed(name, metals)) return metal;
-    return stone;
-}
-static material_t flat_material(const char *name)
-{
-    static const char *const liquids[] = {"NUKAGE", "FWATER", "SWATER", "SLIME", "BLOOD", "LAVA", "WATER", NULL};
-    static const char *const soils[] = {"GRASS", "RROCK19", "RROCK20", "MFLR8_3", "FLAT10", NULL};
-    static const char *const woods[] = {"FLAT5_1", "FLAT5_2", "CEIL1_1", "CRATOP", NULL};
-    static const char *const metals[] = {"FLOOR4", "FLOOR5", "FLAT14", "FLAT20", "FLAT22", "FLAT23",
-        "CEIL3", "COMP", "GATE", "STEP", "TLITE", "SLIME13", "CONS1", NULL};
-    if (prefixed(name, liquids)) return liquid;
-    if (prefixed(name, soils)) return soil;
-    if (prefixed(name, woods)) return wood;
-    if (prefixed(name, metals)) return metal;
-    return stone;
+    if (m.seams < 0 || seams < 0) return m;
+    float shift = fmaxf(fminf(seams - m.seams, RELIEF_REACH), 0);
+    m.scatter = fminf(fmaxf(m.scatter + shift, 0), 1);
+    return m;
 }
 
-/* Per texture and flat, named once per WAD. */
+/* Per texture and flat, named once per WAD; their artwork is read the first
+   time a ray meets them, so a level's start only reads what is near. */
 static material_t *walls, *flats;
+static unsigned char *walls_read, *flats_read;
 static void name_materials(void)
 {
     if (walls) return;
     walls = malloc(sizeof(*walls) * (numtextures > 0 ? numtextures : 1));
     flats = malloc(sizeof(*flats) * (numflats > 0 ? numflats : 1));
+    walls_read = calloc(numtextures > 0 ? numtextures : 1, 1);
+    flats_read = calloc(numflats > 0 ? numflats : 1, 1);
     char name[9];
     for (int i = 0; i < numtextures; ++i) { R_TextureName(i, name); walls[i] = wall_material(name); }
     for (int i = 0; i < numflats; ++i)
@@ -82,13 +89,48 @@ static void name_materials(void)
         flats[i] = flat_material(name);
     }
 }
-static material_t wall(int texture) { return texture > 0 && texture < numtextures ? walls[texture] : stone; }
-static material_t flat(int pic) { return pic >= 0 && pic < numflats ? flats[pic] : stone; }
+static material_t wall(int texture)
+{
+    if (texture <= 0 || texture >= numtextures) return stone;
+    if (!walls_read[texture])
+    {
+        walls_read[texture] = 1;
+        int w, h;
+        R_TextureDimensions(texture, &w, &h);
+        unsigned char *pixels = w > 0 && h > 0 && w <= 4096 && h <= 4096 ? malloc((size_t)w * h * 2) : NULL;
+        if (pixels)
+        {
+            R_CopyIndexedTexture(texture, pixels);
+            walls[texture] = with_relief(walls[texture],
+                Relief_Seams(pixels, w, h, (const unsigned char *)W_CacheLumpName("PLAYPAL", PU_CACHE)));
+            free(pixels);
+        }
+    }
+    return walls[texture];
+}
+static material_t flat(int pic)
+{
+    if (pic < 0 || pic >= numflats) return stone;
+    if (!flats_read[pic])
+    {
+        flats_read[pic] = 1;
+        if (W_LumpLength(firstflat + pic) >= 64 * 64)
+        {
+            static unsigned char pixels[64 * 64 * 2];
+            const unsigned char *flat_data = W_CacheLumpNum(firstflat + pic, PU_CACHE);
+            for (int i = 0; i < 64 * 64; ++i) { pixels[2 * i] = flat_data[i]; pixels[2 * i + 1] = 255; }
+            flats[pic] = with_relief(flats[pic],
+                Relief_Seams(pixels, 64, 64, (const unsigned char *)W_CacheLumpName("PLAYPAL", PU_CACHE)));
+        }
+    }
+    return flats[pic];
+}
 
 /* One ray: how far it gets, off what, and the floors and ceilings it crosses. */
 typedef struct {
     float distance; material_t surface;
     float length, sky_length, height, floor_absorb, floor_dark, ceiling_absorb, ceiling_dark;
+    float floor_scatter, ceiling_scatter;
 } ray_t;
 
 static void cross_sector(ray_t *ray, sector_t *s, float length)
@@ -99,6 +141,7 @@ static void cross_sector(ray_t *ray, sector_t *s, float length)
     ray->height += length * (Map_Ceiling(s) - Map_Floor(s));
     ray->floor_absorb += length * f.absorb; ray->floor_dark += length * f.dark;
     ray->ceiling_absorb += length * c.absorb; ray->ceiling_dark += length * c.dark;
+    ray->floor_scatter += length * f.scatter; ray->ceiling_scatter += length * c.scatter;
 }
 
 static ray_t cast(float x, float y, float cx, float cy, sector_t *start)
@@ -137,21 +180,24 @@ static ray_t cast(float x, float y, float cx, float cy, sector_t *start)
 
 static void dry(room_t *room) { memset(room, 0, sizeof(*room)); room->decay = 0.2f; }
 
-void Room_Measure(room_t *room)
+/* The room around (x, y) in start, heard by an ear at height ear facing
+   facing (radians); its floor plan to outline. */
+static void measure(float x, float y, float ear, sector_t *start, float facing, room_t *room, room_outline_t *outline)
 {
-    mobj_t *listener = players[consoleplayer].mo;
-    if (gamestate != GS_LEVEL || !listener || !listener->subsector || !numlines) { dry(room); return; }
     name_materials();
-    float x = listener->x / (float)FRACUNIT, y = listener->y / (float)FRACUNIT;
-    sector_t *start = listener->subsector->sector;
     Map_Gather(x, y);
 
     static ray_t rays[RAYS];
     const float step = 2 * (float)M_PI / RAYS;
     for (int i = 0; i < RAYS; ++i) rays[i] = cast(x, y, cosf(i * step), sinf(i * step), start);
+    if (outline)
+    {
+        outline->x = x; outline->y = y;
+        for (int i = 0; i < RAYS; ++i) outline->reach[i] = rays[i].distance;
+    }
 
     /* The floor plan the rays outline, and its walls. */
-    float area = 0, perimeter = 0, wall_absorb = 0, wall_dark = 0, open = 0;
+    float area = 0, perimeter = 0, wall_absorb = 0, wall_dark = 0, wall_scatter = 0, open = 0;
     ray_t total = {0};
     for (int i = 0; i < RAYS; ++i)
     {
@@ -162,10 +208,12 @@ void Room_Measure(room_t *room)
         perimeter += chord;
         wall_absorb += chord * 0.5f * (a->surface.absorb + b->surface.absorb);
         wall_dark += chord * 0.5f * (a->surface.dark + b->surface.dark);
+        wall_scatter += chord * 0.5f * (a->surface.scatter + b->surface.scatter);
         if (a->surface.absorb >= 1) open += 1.0f / RAYS;
         total.length += a->length; total.sky_length += a->sky_length; total.height += a->height;
         total.floor_absorb += a->floor_absorb; total.floor_dark += a->floor_dark;
         total.ceiling_absorb += a->ceiling_absorb; total.ceiling_dark += a->ceiling_dark;
+        total.floor_scatter += a->floor_scatter; total.ceiling_scatter += a->ceiling_scatter;
     }
     float length = fmaxf(total.length, 1);
     float height = fmaxf(total.height / length, 16), sky_share = total.sky_length / length;
@@ -175,6 +223,7 @@ void Room_Measure(room_t *room)
     /* Sabine: the tail lasts 0.161 V / A seconds, A the room's absorbing area. */
     float floor_m2 = area * METERS * METERS, height_m = height * METERS, walls_m2 = perimeter * METERS * height_m;
     float volume = floor_m2 * height_m;
+    if (outline) outline->volume = volume;
     float absorbing = floor_m2 * (floor_absorb + ceiling_absorb) + walls_m2 * wall_absorb / perimeter;
     float sabine = 0.161f * volume / fmaxf(absorbing, 0.01f);
     /* Standing under the sky, most of the sound never comes back. */
@@ -182,6 +231,8 @@ void Room_Measure(room_t *room)
     room->decay = fminf(fmaxf(0.5f * sabine * (Map_Sky(start) ? 0.6f : 1), 0.2f), 2.5f);
     float dark_area = floor_m2 * (total.floor_dark + total.ceiling_dark) / length + walls_m2 * wall_dark / perimeter;
     room->damping = fminf(dark_area / fmaxf(2 * floor_m2 + walls_m2, 0.01f), 1);
+    float rough_area = floor_m2 * (total.floor_scatter + total.ceiling_scatter) / length + walls_m2 * wall_scatter / perimeter;
+    room->scatter = fminf(rough_area / fmaxf(2 * floor_m2 + walls_m2, 0.01f), 1);
     /* Bigger rooms ring louder; sky and open air above and around take it away. */
     float size = fminf(fmaxf((log10f(fmaxf(volume, 1)) - 1.7f) / 2.0f, 0), 1);
     size = size * size * (3 - 2 * size);
@@ -189,18 +240,21 @@ void Room_Measure(room_t *room)
 
     /* An echo off the walls in each eighth of the circle, panned to where it is
        as the listener faces; Doom's angles turn left, so left is +90 degrees. */
-    float facing = listener->angle * (2 * (float)M_PI / 4294967296.0f);
     const int per_tap = RAYS / 8;
     for (int k = 0; k < 8; ++k)
     {
         /* The walls that answer set the delay; open air only weakens the echo. */
-        float distance = 0, reflect = 0;
+        float distance = 0, reflect = 0, rough = 0, dull = 0;
         for (int i = 0; i < per_tap; ++i)
         {
             const ray_t *r = &rays[k * per_tap + i];
             distance += r->distance * (1 - r->surface.absorb);
             reflect += (1 - r->surface.absorb) / per_tap;
+            rough += r->surface.scatter * (1 - r->surface.absorb);
+            dull += r->surface.dark * (1 - r->surface.absorb);
         }
+        room->spread[k] = reflect > 0 ? rough / (reflect * per_tap) : 0;
+        room->dark[k] = reflect > 0 ? dull / (reflect * per_tap) : 0;
         distance = reflect > 0 ? distance / (reflect * per_tap) : MAP_REACH;
         float bearing = (k * per_tap + 0.5f * (per_tap - 1)) * step - facing;
         room->delay[k] = 2 * distance / SPEED;
@@ -208,9 +262,35 @@ void Room_Measure(room_t *room)
         room->pan[k] = -sinf(bearing);
     }
     /* And one off the ceiling, unless it is sky. */
-    float above = Map_Ceiling(start) - (listener->z / (float)FRACUNIT + EAR);
+    float above = Map_Ceiling(start) - ear;
     int ceiling = ROOM_TAPS - 1;
     room->delay[ceiling] = 2 * fmaxf(above, 8) / SPEED;
     room->gain[ceiling] = Map_Sky(start) ? 0 : (1 - flat(start->ceilingpic).absorb) * 0.25f / (1 + fmaxf(above, 8) / 320);
     room->pan[ceiling] = 0;
+    room->spread[ceiling] = flat(start->ceilingpic).scatter;
+    room->dark[ceiling] = flat(start->ceilingpic).dark;
+}
+
+static void dry_outline(room_outline_t *outline, float x, float y)
+{
+    if (!outline) return;
+    memset(outline, 0, sizeof(*outline));
+    outline->x = x; outline->y = y;
+}
+
+void Room_Measure(room_t *room, room_outline_t *outline)
+{
+    mobj_t *listener = players[consoleplayer].mo;
+    if (gamestate != GS_LEVEL || !listener || !listener->subsector || !numlines)
+    { dry(room); dry_outline(outline, 0, 0); return; }
+    float x = listener->x / (float)FRACUNIT, y = listener->y / (float)FRACUNIT;
+    measure(x, y, listener->z / (float)FRACUNIT + EAR, listener->subsector->sector,
+            listener->angle * (2 * (float)M_PI / 4294967296.0f), room, outline);
+}
+
+void Room_MeasureAt(float x, float y, float facing, room_t *room, room_outline_t *outline)
+{
+    if (gamestate != GS_LEVEL || !numlines) { dry(room); dry_outline(outline, x, y); return; }
+    sector_t *sector = R_PointInSubsector((fixed_t)(x * FRACUNIT), (fixed_t)(y * FRACUNIT))->sector;
+    measure(x, y, Map_Floor(sector) + EAR, sector, facing, room, outline);
 }

@@ -1,15 +1,15 @@
-A hacked-together-for-fun DOOM port. Each download includes **Freedoom**, so you can
-play straight away; add your own WADs to play DOOM, DOOM II or custom maps.
+DERP, the DOOM Engine Remaster Project. Each download includes **Freedoom**, so you can
+play straight away; add your own WADs to play DOOM, DOOM II, Heretic or custom maps.
 
 ## Download
 
 | System | File | How to play |
 | --- | --- | --- |
-| macOS 11 or newer (Apple Silicon and Intel) | `DuctTapeDOOM-mac.zip` | Unzip and open **Play DOOM.app**. Choose your WAD folder or click **Play Freedoom**. |
-| Windows 10/11, 64-bit | `DuctTapeDOOM-windows.zip` | Unzip, drop your `.wad` files into the `wads` folder and run `doom.exe`. |
-| Linux, x86-64 | `DuctTapeDOOM-linux.tar.gz` | Unpack, drop your `.wad` files into `wads` and run `./doom`. |
+| macOS 11 or newer (Apple Silicon and Intel) | `DERP-mac.zip` | Unzip and open **Play DOOM.app**. Choose your WAD folder or click **Play Freedoom**. |
+| Windows 10/11, 64-bit | `DERP-windows.zip` | Unzip, drop your `.wad` files into the `wads` folder and run `doom.exe`. |
+| Linux, x86-64 | `DERP-linux.tar.gz` | Unpack, drop your `.wad` files into `wads` and run `./doom`. |
 
-`DuctTapeDOOM-source.tar.gz` is the complete source of these downloads: the
+`DERP-source.tar.gz` is the complete source of these downloads: the
 game's code plus the exact SDL and Nuked OPL3 sources it is built with, so it
 builds without an internet connection. GitHub's "Source code" archives hold
 the game's code only.
@@ -34,7 +34,8 @@ falls back to the classic renderer.
 
 This is a pre-release. The Mac version is the most tested. The Windows and Linux
 versions are built automatically but have had little real play, so please
-[report problems](https://github.com/robongrui/duct-tape-doom/issues).
+[report problems](https://github.com/robongrui/derp/issues).
 
 Supported maps: vanilla and limit-removing, including DEHACKED patches. Boom,
-MBF21 and GZDoom maps are not supported. Multiplayer is not implemented.
+MBF21 and GZDoom maps are not supported. Heretic plays from your own `heretic.wad`
+or `HERETIC.WAD`; Hexen is not supported yet. Multiplayer is not implemented.

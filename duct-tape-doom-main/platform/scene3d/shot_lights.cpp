@@ -3,6 +3,7 @@
    see as before, and a new level or a loaded game brings the lights back. */
 #include "internal.h"
 extern "C" {
+#include "p_solid.h"
 #include "../audio/impact_synth.h"
 #include "../audio/sound_options.h"
 }
@@ -33,11 +34,12 @@ bool tileDark(const SurfaceLightKey &key) {
     auto found=brokenTiles.find(key);
     if(found==brokenTiles.end())return false;
     float age=gameSeconds()-found->second.born;
-    if(age<0||age>=sputterSeconds)return true;
+    float duration=settings.environmentEffects&&settings.electricalDamage?3.f:sputterSeconds;
+    if(age<0||age>=duration)return true;
     int tic=(int)(age*TICRATE);
     if(tic<1)return true;
     uint32_t seed=(uint32_t)std::lround(found->second.born*TICRATE);
-    return hashUnit(tic/2,0,seed)>=0.6f*(1-age/sputterSeconds);
+    return hashUnit(tic/2,0,seed)>=0.6f*(1-age/duration);
 }
 bool tileShotOut(const SurfaceLightKey &key) {return brokenTiles.count(key)>0;}
 // The texture row offset a wall section is drawn from, as wallGeometry sets it.
@@ -75,6 +77,42 @@ static void sparks(float x,float y,float z,const float n[3],int count,bool glass
                                        :(i%3?std::array<float,3>{0.3f,0.55f,1.0f}:std::array<float,3>{0.8f,0.92f,1.0f});
         float v[3];for(int c=0;c<3;++c)v[c]=n[c]*out+t1[c]*across+t2[c]*up;
         debris.push_back({x+n[0]*1.5f,y+n[1]*1.5f,z+n[2]*1.5f,v[0],v[1],v[2],now,randomRange(0.12f,0.35f),randomRange(0.7f,1.2f),color,1.0f});
+    }
+}
+struct ElectricalFault {float x,y,z,n[3],born,next,lastFlash=-100;};
+static std::vector<ElectricalFault> faults;
+static unsigned faultLevel=~0u;
+static void addFault(float x,float y,float z,const float n[3]){
+    if(faultLevel!=r_levelserial){faults.clear();faultLevel=r_levelserial;}
+    if(!settings.environmentEffects||!settings.electricalDamage)return;
+    if(std::any_of(faults.begin(),faults.end(),[&](const auto &f){return std::hypot(x-f.x,y-f.y)<24&&std::abs(z-f.z)<24;}))return;
+    if(faults.size()>=16)faults.erase(faults.begin());
+    faults.push_back({x,y,z,{n[0],n[1],n[2]},gameSeconds(),gameSeconds()+.25f});
+}
+static void tickFaults(){
+    if(faultLevel!=r_levelserial||!settings.environmentEffects||!settings.electricalDamage||!settings.shootableLights||!settings.emissive){faults.clear();faultLevel=r_levelserial;return;}
+    float now=gameSeconds();int flashes=0;
+    faults.erase(std::remove_if(faults.begin(),faults.end(),[&](const auto &f){return now<f.born||now-f.born>5;}),faults.end());
+    for(auto &f:faults){
+        if(now<f.next||flashes>=2)continue;f.next=now+randomRange(.25f,.8f);
+        if(SV_Active()&&SV_Trace(f.x+f.n[0]*3,f.y+f.n[1]*3,f.z+f.n[2]*3,-f.n[0]*6,-f.n[1]*6,-f.n[2]*6,nullptr,nullptr)>=1)continue;
+        sparks(f.x,f.y,f.z,f.n,3,false);f.lastFlash=now;++flashes;
+        sparkFlash(f.x+f.n[0]*4,f.y+f.n[1]*4,f.z+f.n[2]*4,64,.6f,{.3f,.6f,1.f});
+    }
+}
+void buildElectricalArcs(const Uniforms &camera){
+    if(!settings.environmentEffects||!settings.electricalDamage||!settings.shootableLights||!settings.emissive||faultLevel!=r_levelserial)return;
+    float now=gameSeconds();
+    for(const auto &f:faults){
+        float age=now-f.lastFlash;if(age<0||age>.12f)continue;
+        float tx=-f.n[1],ty=f.n[0],len=std::hypot(tx,ty);if(len<.1f){tx=1;ty=0;}else{tx/=len;ty/=len;}
+        uint32_t seed=uint32_t(f.lastFlash*TICRATE)*2654435761u;
+        float px=f.x+f.n[0]*3-tx*7,py=f.y+f.n[1]*3-ty*7,pz=f.z+f.n[2]*3;
+        for(int i=1;i<=5;++i){
+            float x=f.x+f.n[0]*3+tx*(i*2.8f-7),y=f.y+f.n[1]*3+ty*(i*2.8f-7),z=f.z+f.n[2]*3+(hashUnit(i,0,seed)-.5f)*7;
+            auto vertex=[&](float vx,float vy,float vz,float side){Vertex v={vx+camera.up[0]*side,vy+camera.up[1]*side,vz+camera.up[2]*side,0,0,1-age/.12f,0};v.red=.45f;v.green=.8f;v.blue=1;return v;};
+            quad(particleVertices,vertex(px,py,pz,.25f),vertex(x,y,z,.25f),vertex(x,y,z,-.25f),vertex(px,py,pz,-.25f));px=x;py=y;pz=z;
+        }
     }
 }
 // The floors or ceilings joined to a sector's (through two-sided lines,
@@ -180,7 +218,7 @@ static int tileKind(const SurfaceLightKey &key) {
         int pic=key[2]?sectors[key[1]].ceilingpic:sectors[key[1]].floorpic;
         if(pic==skyflatnum)return DOOM_EMISSIVE_NONE;
         memcpy(name,lumpinfo[firstflat+flattranslation[pic]].name,8);name[8]=0;
-        return doom_emissive_kind(name,1);
+        return Game_GlowKind(name,1);
     }
     const line_t &line=lines[key[1]];
     if(line.sidenum[key[2]]<0)return DOOM_EMISSIVE_NONE;
@@ -188,7 +226,7 @@ static int tileKind(const SurfaceLightKey &key) {
     int texture=key[5]==1?s.toptexture:key[5]==2?s.bottomtexture:s.midtexture;
     if(texture<=0)return DOOM_EMISSIVE_NONE;
     R_TextureName(texturetranslation[texture],name);
-    return doom_emissive_kind(name,0);
+    return Game_GlowKind(name,0);
 }
 // A near miss: the unbroken lamp whose light point (the middle of its
 // glow) lies within 16 units of the hit, on whatever surface the hit is. A
@@ -213,7 +251,7 @@ static const SurfaceLight *nearLamp(float x,float y,float z) {
 // piece has none at all, lampless breaks it (or what it joins) whole.
 static void shotSurface(const char *name,bool flat,const Image &image,float u,float v,const std::function<bool(const SurfaceLightKey&)> &matches,
                         const std::function<bool()> &lampless,float x,float y,float z,const float normal[3],int reach) {
-    int kind=doom_emissive_kind(name,flat);
+    int kind=Game_GlowKind(name,flat);
     bool fixture=settings.emissive&&(kind==DOOM_EMISSIVE_LAMP||kind==DOOM_EMISSIVE_PANEL)&&shotGlow(image,u,v,kind==DOOM_EMISSIVE_PANEL,reach);
     std::array<float,3> color=image.emissionColor;
     auto anyTile=[&] {
@@ -221,6 +259,7 @@ static void shotSurface(const char *name,bool flat,const Image &image,float u,fl
                std::any_of(brokenTiles.begin(),brokenTiles.end(),[&](const auto &entry){return matches(entry.first);});
     };
     if(fixture&&(breakNearest(matches,x,y,z,color)||(!anyTile()&&lampless()))) {
+        addFault(x,y,z,normal);
         dyingSound(kind,x,y,z);
         sparks(x,y,z,normal,16,kind==DOOM_EMISSIVE_LAMP);
         for(float &channel:color)channel=0.5f+0.5f*channel;
@@ -230,13 +269,14 @@ static void shotSurface(const char *name,bool flat,const Image &image,float u,fl
     if(settings.emissive)if(const SurfaceLight *lamp=nearLamp(x,y,z)) {
         color=lamp->color;
         breakFixture(*lamp);
+        addFault(x,y,z,normal);
         dyingSound(DOOM_EMISSIVE_LAMP,x,y,z);
         sparks(x,y,z,normal,16,true);
         for(float &channel:color)channel=0.5f+0.5f*channel;
         sparkFlash(x+normal[0]*8,y+normal[1]*8,z+normal[2]*8,256,2.0f,color);
         return;
     }
-    if(!doom_spark_texture(name,flat))return;
+    if(!Game_SparkTexture(name,flat))return;
     float pick=randomRange(0,1);
     I_MadeSound(pick<0.5f?IMPACT_SPARK_CRACKLE:pick<0.8f?IMPACT_SPARK_FIZZ:IMPACT_SPARK_ZAP,x,y,z);
     sparks(x,y,z,normal,6,false);
@@ -377,6 +417,7 @@ void blastLights(float x,float y,float z,float radius) {
         float n[3]={x-tile.x,y-tile.y,z-tile.z},span=std::max(1.0f,length);
         for(float &c:n)c/=span;
         float hi=std::max({tile.color[0],tile.color[1],tile.color[2]}),lo=std::min({tile.color[0],tile.color[1],tile.color[2]});
+        addFault(tile.x,tile.y,tile.z,n);
         sparks(tile.x,tile.y,tile.z,n,10,hi-lo<0.3f);
     }
     float now=gameSeconds();
@@ -393,7 +434,7 @@ void blastLights(float x,float y,float z,float radius) {
             float pz=std::clamp(z,span.bottom,span.top);
             if(std::hypot(std::hypot(px-x,py-y),pz-z)>=radius)continue;
             char name[9];R_TextureName(texturetranslation[span.texture],name);
-            int kind=doom_emissive_kind(name,0);
+            int kind=Game_GlowKind(name,0);
             if(kind!=DOOM_EMISSIVE_LAMP&&kind!=DOOM_EMISSIVE_PANEL)continue;
             if(wallImage(texturetranslation[span.texture]).emissionWeight<=0)continue;
             SurfaceLightKey whole=wholePiece(i,side,section);
@@ -415,7 +456,8 @@ static std::unordered_map<const mobj_t*,Flight> flights;
 // breaks no wall.
 static void projectileBurst(const mobj_t &thing,const Flight &flight) {
     float x=units(thing.x),y=units(thing.y),z=units(thing.z)+units(thing.height)/2;
-    if(thing.type==MT_ROCKET||thing.type==MT_BFG)blastLights(x,y,z,128);
+    game_thing_role role=Game_ThingRole(thing.type);
+    if(role==GAME_THING_ROCKET||role==GAME_THING_BIG_SHOT)blastLights(x,y,z,128);
     int reach=std::max(1,(int)std::lround(units(thing.radius)*0.5f));
     int sector=int(thing.subsector->sector-sectors);
     if(thing.z<=thing.floorz+FRACUNIT) {if(sectors[sector].floorpic!=skyflatnum)shotFlat(sector,false,x,y,units(thing.floorz),reach);return;}
@@ -430,6 +472,7 @@ static void projectileBurst(const mobj_t &thing,const Flight &flight) {
     carryShot(x,y,z,dx,dy,flight.slope,ahead,reach);
 }
 void watchShotLights() {
+    tickFaults();
     if(!settings.shootableLights||!settings.emissive||gamestate!=GS_LEVEL) {flights.clear();return;}
     for(auto &entry:flights)entry.second.seen=false;
     for(int i=0;i<numsectors;++i)for(mobj_t *thing=sectors[i].thinglist;thing;thing=thing->snext) {
@@ -454,13 +497,16 @@ void watchShotLights() {
 // texture repeats its sample stands for, and the outer ones reach the
 // piece's ends. Split along those edges, the piece's quads inside them get
 // MODE_DEAD_GLOW. A flickering sector's lamps go dark whole while they are
-// out (lampOut).
+// out (lampOut), marked MODE_LAMP_OFF too: switched off, not shot, so a
+// screen among them keeps its glass whole; its shot-out tiles stay broken.
 bool addBrokenWall(std::vector<Vertex> &out,const line_t &line,int side,int span,const Image &image,Point a,Point b,
                    float bottom,float top,float u,float anchor,float light,unsigned mode,unsigned seed) {
     int index=(int)(&line-lines);
     if(image.emissionWeight<=0)return false;
-    bool off=lampOut(int(sides[line.sidenum[side]].sector-sectors)); // A flickering sector's lamps, switched off.
-    if(!off&&(brokenPieces.empty()||!brokenPieces.count({0,index*2+side,span})))return false;
+    bool off=lampOut(int(sides[line.sidenum[side]].sector-sectors),image); // A flickering sector's lamps, switched off.
+    bool shot=!brokenPieces.empty()&&brokenPieces.count({0,index*2+side,span});
+    if(!off&&!shot)return false;
+    unsigned offMode=off?MODE_DEAD_GLOW|MODE_LAMP_OFF:0u;
     float len=std::hypot(b.x-a.x,b.y-a.y),w=(float)image.width,h=(float)image.height;
     if(len<=0)return false;
     auto vertex=[&](float along,float z,unsigned m) {
@@ -469,9 +515,8 @@ bool addBrokenWall(std::vector<Vertex> &out,const line_t &line,int side,int span
         bakeWallCoordinates(line,side,along,v,true);v.statics=seed;
         return v;
     };
-    if(off)mode|=MODE_LAMP_OFF;
-    if(tileShotOut(wholePiece(index,side,span))) {
-        unsigned m=mode|MODE_DEAD_GLOW;
+    if(!shot||tileDark(wholePiece(index,side,span))) {
+        unsigned m=mode|(shot?MODE_DEAD_GLOW:offMode);
         quad(out,vertex(0,top,m),vertex(len,top,m),vertex(len,bottom,m),vertex(0,bottom,m));
         return true;
     }
@@ -488,7 +533,8 @@ bool addBrokenWall(std::vector<Vertex> &out,const line_t &line,int side,int span
     }
     if(dark.empty()) {
         if(!off)return false;
-        quad(out,vertex(0,top,mode),vertex(len,top,mode),vertex(len,bottom,mode),vertex(0,bottom,mode));
+        unsigned m=mode|offMode;
+        quad(out,vertex(0,top,m),vertex(len,top,m),vertex(len,bottom,m),vertex(0,bottom,m));
         return true;
     }
     std::vector<float> alongs={0,len},heights={bottom,top};
@@ -498,7 +544,7 @@ bool addBrokenWall(std::vector<Vertex> &out,const line_t &line,int side,int span
         float a0=alongs[i],a1=alongs[i+1],z0=heights[j],z1=heights[j+1];
         float ma=(a0+a1)*0.5f,mz=(z0+z1)*0.5f;
         bool dead=std::any_of(dark.begin(),dark.end(),[&](const std::array<float,4> &r){return ma>r[0]&&ma<r[1]&&mz>r[2]&&mz<r[3];});
-        unsigned m=mode|(dead?MODE_DEAD_GLOW:0u);
+        unsigned m=mode|(dead?MODE_DEAD_GLOW:offMode);
         quad(out,vertex(a0,z1,m),vertex(a1,z1,m),vertex(a1,z0,m),vertex(a0,z0,m));
     }
     return true;
@@ -509,15 +555,16 @@ bool addBrokenWall(std::vector<Vertex> &out,const line_t &line,int side,int span
 // dark whole.
 bool addBrokenFlat(std::vector<Vertex> &out,int leaf,int sector,bool ceiling,const Image &image,float z,float light,unsigned mode) {
     if(image.emissionWeight<=0)return false;
-    bool off=lampOut(sector);
-    if(!off&&(brokenPieces.empty()||!brokenPieces.count({1,sector,(int)ceiling})))return false;
-    if(off)mode|=MODE_LAMP_OFF;
-    bool wholeBroken=tileShotOut(wholePlane(sector,ceiling));
-    if(wholeBroken||(off&&!brokenPieces.count({1,sector,(int)ceiling}))) {
+    bool off=lampOut(sector,image);
+    bool shot=!brokenPieces.empty()&&brokenPieces.count({1,sector,(int)ceiling});
+    if(!off&&!shot)return false;
+    unsigned offMode=off?MODE_DEAD_GLOW|MODE_LAMP_OFF:0u;
+    auto whole=[&](unsigned m) {
         const auto &poly=floors[leaf];
-        for(size_t n=1;n+1<poly.size();++n)for(Point p:{poly[0],poly[n],poly[n+1]})out.push_back({p.x,p.y,z,p.x,-p.y,light,mode|(wholeBroken?MODE_DEAD_GLOW:0u)});
+        for(size_t n=1;n+1<poly.size();++n)for(Point p:{poly[0],poly[n],poly[n+1]})out.push_back({p.x,p.y,z,p.x,-p.y,light,mode|m});
         return true;
-    }
+    };
+    if(!shot||tileDark(wholePlane(sector,ceiling)))return whole(shot?MODE_DEAD_GLOW:offMode);
     auto ours=[&](const SurfaceLightKey &k){return k[0]==0&&k[1]==sector&&k[2]==(int)ceiling;};
     std::set<std::pair<int,int>> tiles,dark;
     for(const auto &tile:surfaceLights)if(ours(tile.key))tiles.insert({tile.key[3],tile.key[4]});
@@ -535,12 +582,7 @@ bool addBrokenFlat(std::vector<Vertex> &out,int leaf,int sector,bool ceiling,con
         std::array<float,4> s={u*w,-(v+1)*h,(u+1)*w,-v*h};
         if(s[0]<bounds[2]&&s[2]>bounds[0]&&s[1]<bounds[3]&&s[3]>bounds[1])squares.push_back(s);
     }
-    if(squares.empty()) {
-        if(!off)return false;
-        const auto &poly=floors[leaf];
-        for(size_t n=1;n+1<poly.size();++n)for(Point p:{poly[0],poly[n],poly[n+1]})out.push_back({p.x,p.y,z,p.x,-p.y,light,mode});
-        return true;
-    }
+    if(squares.empty())return off&&whole(offMode);
     std::vector<std::vector<Point>> pieces={floors[leaf]};
     auto split=[&](bool vertical,float at) {
         std::vector<std::vector<Point>> next;
@@ -559,19 +601,19 @@ bool addBrokenFlat(std::vector<Vertex> &out,int leaf,int sector,bool ceiling,con
         Point mid={0,0};
         for(const Point &p:piece) {mid.x+=p.x/piece.size();mid.y+=p.y/piece.size();}
         bool dead=std::any_of(squares.begin(),squares.end(),[&](const std::array<float,4> &s){return mid.x>s[0]&&mid.x<s[2]&&mid.y>s[1]&&mid.y<s[3];});
-        unsigned m=mode|(dead?MODE_DEAD_GLOW:0u);
+        unsigned m=mode|(dead?MODE_DEAD_GLOW:offMode);
         for(size_t n=1;n+1<piece.size();++n)for(Point p:{piece[0],piece[n],piece[n+1]})out.push_back({p.x,p.y,z,p.x,-p.y,light,m});
     }
     return true;
 }
 #ifdef DOOM_TEST_DRIVER
 extern "C" void I_TestBrokenFlicker(void) {
-    int index=-1,sector=-1;
+    int index=-1,sector=-1;Image lamp;lamp.emissionWeight=1;
     for(int i=0;i<numlines;++i)if(lines[i].sidenum[0]>=0){
         int candidate=int(sides[lines[i].sidenum[0]].sector-sectors);
         int saved=sectors[candidate].lightlevel;
-        sectors[candidate].lightlevel=0;bool low=lampOut(candidate);
-        sectors[candidate].lightlevel=255;bool high=lampOut(candidate);
+        sectors[candidate].lightlevel=0;bool low=lampOut(candidate,lamp);
+        sectors[candidate].lightlevel=255;bool high=lampOut(candidate,lamp);
         sectors[candidate].lightlevel=saved;
         if(low&&!high){index=i;sector=candidate;break;}
     }
@@ -605,5 +647,18 @@ void dimShotSector(int sector,float share) {
     if(shotDim.size()!=(size_t)numsectors)shotDim.assign(numsectors,1.0f);
     shotDim[sector]=std::max(0.1f,shotDim[sector]*(1-0.85f*std::clamp(share,0.0f,1.0f)));
 }
-void shotLightsShutdown() {brokenTiles.clear();brokenPieces.clear();shotDim.clear();flights.clear();}
+void shotLightsShutdown() {faults.clear();faultLevel=~0u;brokenTiles.clear();brokenPieces.clear();shotDim.clear();flights.clear();}
 } // namespace doom3d
+
+extern "C" void I_TestElectricalFaults(){
+    using namespace doom3d;
+    auto old=settings;auto oldFaults=std::move(faults);auto oldDebris=debris;int oldTime=leveltime;
+    settings.environmentEffects=settings.electricalDamage=settings.shootableLights=settings.emissive=1;
+    float n[3]={1,0,0};for(int i=0;i<40;++i)addFault(float(i*40),0,32,n);
+    if(faults.size()!=16)I_Error("Electrical faults exceeded cap");
+    leveltime+=6*TICRATE;tickFaults();if(!faults.empty())I_Error("Electrical faults did not expire");
+    leveltime=oldTime;addFault(0,0,32,n);settings.electricalDamage=0;tickFaults();
+    if(!faults.empty())I_Error("Electrical toggle did not clear faults");
+    settings=old;faults=std::move(oldFaults);debris=std::move(oldDebris);
+    puts("PASS electrical fault cap, expiry and toggle");
+}

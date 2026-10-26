@@ -1,5 +1,21 @@
-# Duct-Tape DOOM
+# DOOM Engine Remaster Project - DERP
 
+## A few thoughts: 
+The technically correct name would probably be *Remaster Project for DOOM Engine Games*, but RPFDE is a terrible acronym, so DERP it is. Up to v0.4.5 this project was called Duct-Tape DOOM.
+
+This has grown into more than I initially had in mind. The basic idea is described further down and still holds, but during development I realised how much I enjoy thinking about what these environments were supposed to look and feel like, and what the technical constraints of the time kept them from doing.
+
+My work on Doom, Doom II and now Heretic is certainly opinionated, but I try not to add anything that wasn't already suggested by the original maps, artwork or game logic. The goal is to take those hints seriously and give them room to become what they seem to have been pointing toward.
+
+This project is a creative undertaking, not a programming exercise or a demonstration of my coding skills. Code is one of the tools I use to build it.
+
+Feedback about whether it works, whether it’s enjoyable, and whether it achieves its creative goals is welcome. But judging it by how much code I personally wrote measures something I’m not claiming to demonstrate.
+
+A note on forks and contributions
+DERP is an ongoing creative project, and I welcome contributions that improve it. If you're primarily interested in fixing bugs, improving performance, or extending existing features, I'd appreciate a pull request rather than another distribution of essentially the same project.
+The GPL gives you every right to fork DERP, and I respect that. I simply believe that improvements to the existing project benefit everyone more when they're developed together.
+
+## Original Text 
 An idea of how DOOM could have looked if id had kept iterating on this engine,
 and if we still played on CRTs. It tries to look newer without looking modern:
 light comes from lamps and windows, monsters are lit as rounded bodies, water
@@ -8,7 +24,7 @@ light still steps
 like DOOM's light levels, shadow edges break into dither and the pixels stay
 DOOM-sized.
 
-Under the hood it is a for-fun experimental port of id Software's 1997 DOOM
+Under the hood it is an experimental port of id Software's 1997 DOOM
 source release to macOS, Linux and Windows. It keeps the original game
 simulation and adds an optional GPU renderer that builds a 3D scene from the
 loaded WAD while the game runs.
@@ -27,7 +43,7 @@ This started as a visual experiment to see how far DOOM's presentation could
 be pushed while it still looks and plays like DOOM. I think of it as an art
 project. Effects stay or go based on how they look in-game, and the code is
 written for trying ideas out quickly. It is not meant to be a reference engine
-or a library to build on, and the "duct tape" in the name is accurate.
+or a library to build on.
 
 To fit the idea at the top, most of the effects are fake-modern: cheap tricks
 of the kind I liked in late-90s games, not the techniques a modern engine
@@ -47,25 +63,37 @@ graphics panel with **F4**.
 
 - **Accelerated 3D renderer:** SDL_gpu, using Metal on macOS and Vulkan on
   Linux and Windows.
-- **Native resolution and any aspect ratio,** with mouse look, interpolated
-  movement and optional MSAA.
+- **Native resolution and any aspect ratio,** with mouse look and free aim,
+  interpolated movement and optional MSAA.
 - **Classic renderer:** the original 320×200 software view is one keypress
   away.
 - **No asset pack:** the WAD's own textures, flats, sprites and palettes are
   the source material, and there are no added sound files either.
 - **Compatibility:** vanilla and limit-removing maps, including DEHACKED
   patches.
-- **Not supported:** Boom, MBF21 and GZDoom maps, slopes, 3D floors, model
-  packs, ray tracing and multiplayer.
+- **Heretic too:** Raven's Heretic runs as a second program on the same
+  renderer, lighting and sound, tuned for its fantasy world. The launcher
+  hands Heretic WADs over by itself. See [Heretic](#heretic) below.
+- **Not supported:** Boom, MBF21 and GZDoom maps, Hexen, DOOM 64, slopes,
+  3D floors, model packs, ray tracing and multiplayer.
 - **Window glass:** windows found in the map get glass that reflects the room
   and shatters when something goes through it.
 - **Lights can be shot out:** lamps and screens break when shot or caught in a
   blast, and the room goes dark with them.
 - **Blinking lights:** lamps in flickering sectors blink, strobe and pulse with
   DOOM's light effects, and the baked light they throw follows them.
+- **Wounds and deaths:** bullets leave see-through holes that follow the
+  monster's animation, and every death is drawn anew: pushed by the blow,
+  retimed, and for monsters on two legs a procedural fall chosen by where the
+  hit landed, or a ragdoll: the drawing raised into a body, thrown down and
+  drawn back into a sprite. See [Monsters die differently every time](#monsters-die-differently-every-time)
+  and [Ragdolls are drawn back into sprites](#ragdolls-are-drawn-back-into-sprites).
+- **Rain and wear:** DOOM's first episode lies at night in a downpour, rain
+  runs down the windows and blows in through broken ones, and walls and
+  plates show their years. See [Rain, night and wear](#rain-night-and-wear).
 - **Room acoustics:** echoes and reverb measured from the map, with sounds
-  finding their way round corners, through doors and windows, and dulled by
-  distance.
+  finding their way round corners, through doors and windows, and fading
+  with distance as they do in air.
 - **Sounds DOOM never had, synthesized:** sparks, dying lamps, breaking
   glass, footsteps, and the hum, bubble and wind of the map around you. None
   of them is a recording; small synths written for each sound generate them
@@ -84,7 +112,7 @@ but have had less real play.
 ## Download and play
 
 Ready-to-play builds for macOS, Windows and Linux are on the
-[Releases page](https://github.com/robongrui/duct-tape-doom/releases). Each one
+[Releases page](https://github.com/robongrui/derp/releases). Each one
 includes Freedoom, so it plays straight away.
 
 On Windows and Linux, put your own `.wad` files in the `wads` folder next to
@@ -96,6 +124,28 @@ sound options.
 The ambience is quiet by design and the music covers it. For the soundscape,
 turn the music down or off in **Options → Sound Volume**.
 
+## Heretic
+
+DERP plays Raven's Heretic as well, on the same 3D renderer, lighting, sound
+and music, and again worked out entirely from the WAD you load. Pick a
+Heretic WAD in the launcher (or drop it in the `wads` folder) and the game
+starts the Heretic program, `derp-heretic`, which ships next to the DOOM one.
+You need your own copy: the 2025 *Heretic + Hexen* release has both the new
+`heretic.wad` and the original DOS `HERETIC.WAD`, and both work.
+
+The effects are tuned for a fantasy world rather than a tech base. There is
+no window glass to shatter, no lamps to shoot out and no flashlight: the
+Torch item is the light you carry, burning as a flickering flame. Torches,
+chandeliers and serpent statues light their rooms, stained glass glints and
+throws its colours onto the floor, water is clear and mirror-like, the Ice
+Grotto's floor gets glassy streaks, and gloss comes from each texture's
+material instead of DOOM's palette ramps. Where Heretic already has
+something of its own, such as its wind and waterfall sounds, the game's
+version is used and DERP's made-up one stays off.
+
+Heretic is new and less played than DOOM; [`heretic/README.md`](heretic/README.md)
+has its controls, what works and what doesn't yet.
+
 ## Screenshots
 
 <p>
@@ -105,7 +155,7 @@ turn the music down or off in **Options → Sound Volume**.
 <img src="screens/blue-corridor.jpg" width="49%" alt="A blue-lit corridor with a green room at the end" />
 </p>
 
-## How the graphics cheat
+## What the graphics do
 
 ### Light comes from things that look like lights
 
@@ -279,7 +329,7 @@ floors and other map geometry block this light.
 
 See [`platform/flash_lighting.h`](platform/flash_lighting.h).
 
-### The flashlight sits at the shoulder
+### The flashlight
 
 The flashlight is mounted at the player's right shoulder, a little behind the
 eyes as in Doom 3. It lights the floor ahead from above, and wall edges, door
@@ -346,6 +396,14 @@ dynamic lights slide across it as a highlight on the glass.
 
 ![A computer screen with curved glass next to two zombies](screens/crt-screen.jpg)
 
+The same search finds **live readouts**: blocks of glowing LED cells painted
+outside the screens, such as the green grids on `COMPUTE2`. A readout is a
+group of texels in one hue (green, blue or red) over several palette steps
+that fills its box and sits in the housing. The shader then changes its
+cells now and then, cell by cell, each taking the light of another in its
+row, so the consoles look busy without any new artwork. F4 → Glow → **Live
+readouts**.
+
 See [`platform/screen_glass.h`](platform/screen_glass.h).
 
 ### Water reflects the room
@@ -372,6 +430,21 @@ See
 Liquid flats can throw moving caustics onto nearby walls and, optionally,
 ceilings. The pattern is taken from the level's own liquid artwork. Banks just
 above liquids that aren't hot can darken as if damp.
+
+Walls running straight into nukage, slime or lava take the glowing strip the
+game paints at the foot of its own edge textures (DOOM's NUKE24 steps, for
+example). The strip is found in the WAD when the level loads, so every wall
+meeting the liquid gets it, not only the ones a mapper textured that way.
+Walls that already paint the edge themselves, or glow up their whole face
+like dripping vents and falls, are left as they are.
+Along the shore, thin ripple lines run out from the walls like the splash
+rings: quick and fine on water, slow and broad on nukage and slime, slow and
+glowing on lava, a still dark line on blood.
+
+Big pools read as one body of liquid instead of a tiled flat. Far away and at
+grazing angles the flat's detail fades toward the animation's average colour,
+and the surface drifts between calmer and rougher patches with long, slow
+wave bands in the reflection. Up close the WAD's own flat is still the detail.
 
 Bullets hitting liquid throw palette-colored drops and expanding rings, and
 things landing or wading in it disturb it too. Nukage, slime, blood and lava
@@ -404,10 +477,16 @@ the flashlight.
 The game code doesn't know the glass is there. Shots, sight and movement pass
 through exactly as in vanilla, so the renderer watches for anything crossing a
 window. A render-only hook reports hitscan shots crossing a line, and
-projectiles and explosions are checked every tic. The first thing through
-shatters the window into palette-colored shards that fall, bounce and lie on
-the floor for a while, leaving a jagged rim in the frame. Monster shots count
-too, so a fight across a window breaks it. Once it is broken, the wind and
+projectiles and explosions are checked every tic. The first two bullets leave
+small, jagged holes with chipped edges and branching, pixel-stepped cracks.
+The third bullet starts a fracture at its own impact: cracks spread outward
+across the flat pane, and pieces stay attached until the fracture reaches them.
+Projectiles and explosions break glass outright. The pane breaks into large,
+irregular pieces, with smaller pieces near the final hit and stepped pixel
+edges like the glass left in the frame. They tumble,
+catch reflections while flying, bounce and become matte once settled. They
+lie flat on the floor for a while, leaving a jagged rim in the frame. Monster
+shots count too, so a fight across a window breaks it. Once it is broken, the wind and
 other sounds from outside come through it clearly (see the sound section).
 
 <p>
@@ -490,7 +569,9 @@ Getting them back took several pieces:
 - **Reading the swing.** Each flickering sector's light thinker says how far
   its level swings. Lamps in that sector follow where the level sits within it.
   Blinking and strobing sectors switch their lamps off in the lower half of the
-  swing. Glowing and fire-flickering sectors fade them up and down.
+  swing. Glowing and fire-flickering sectors fade them up and down. The swing
+  belongs to the lamps, not to the room's power, so screens beside them stay
+  on. Only where screens are a sector's only glowing textures do they flicker.
 - **Keeping the light baked.** One live light per lamp would cost frame time
   and lose the bake's soft, stepped shadows. A first try with live lights cast
   razor-sharp ones. Instead, each flickering sector's lamps get a flicker
@@ -504,9 +585,11 @@ Getting them back took several pieces:
   and switching after left blocks of lamp light glowing on when the lamp was
   out. Each cell is now switched by its own group before the blend, and the
   bounce light switches with it.
-- **The shot-out look.** A switched-off tube is drawn exactly like one that's
-  been shot out: grey and dead. A glowing sector fades its lamp's glowing pixels
-  instead.
+- **The shot-out look.** A switched-off tube is drawn like one that's been shot
+  out: grey and dead. A screen switched off this way keeps its glass whole,
+  since nothing broke it. A glowing sector fades its lamp's glowing pixels
+  instead, and a lamp shot out in a glowing sector stays dead rather than
+  pulsing along.
 - **DOOM's level with the lamps out.** Rooms whose light comes mostly from
   their lamps get part of their sector light taken away, so the lamps can put
   it back with direction. That used to count flickering lamps too, so a room
@@ -530,7 +613,9 @@ damaging floors can carry low cloud-like layers of mist. Sunlit openings can
 cast simple light shafts back toward the sun, with dust motes showing only
 where the sun or flashlight catches them. Hot floors and flames create small
 heat volumes, which a screen pass turns into a sideways shimmer that steps with
-the game tics.
+the game tics. Flames shed a few one-pixel embers that rise, cool from the
+flame's own colour to dark red and go out; where Heretic's wind sectors blow,
+the wind carries them off.
 
 The sun's position is inferred from the level's sky lighting. It can be drawn
 in the sky, optionally with forward scattering.
@@ -543,6 +628,39 @@ See
 [`platform/shaders/mist.frag`](platform/shaders/mist.frag) and
 [`platform/shaders/present.frag`](platform/shaders/present.frag).
 
+### Rain, night and wear
+
+Most of DERP's look is derived from the WAD, but the game's own episodes can
+also get a look picked by hand. With **Authored episodes** on, DOOM's first
+episode lies at night in a steady downpour: the sun is hidden, and the lit
+rooms shine out through their windows into the dark. Only maps the IWAD
+itself holds get it; Freedoom's maps and PWADs keep the derived look, sun
+and all. Turned off, every map is lit as the WAD gives it.
+
+Rain falls wherever the sky is open, as streaks of whole Doom pixels that
+step at the game's tic rate, slanted by a wind of its own. It splashes where
+it lands and rings on liquids. Drops gather and run down the outside of the
+window glass, and the ground under the sky lies wet in a few baked steps.
+Through a broken window the wind blows the rain in, and the floor and wall
+beneath the window soak. A few rooms beside the open sky have a crack in the
+ceiling, damp around it, with rain dripping through onto a small puddle. The
+rain is heard as a dense, soft patter. F4 → **Weather and wear → Rain**
+picks Never, Authored episodes (it rains where an authored look has rain) or
+Always.
+
+The weather has also left marks over the years. Dark streaks run down the
+outside walls below windows that look out under the sky, rusty on metal, and
+inside they start once rain blows through a broken pane. Plain metal plates,
+such as the fronts of DOOM's computer desks, get grime packed into their
+seams, dull blotches, boot scuffs near the floor and a duller sheen. All of
+it is drawn over the artwork by the world shader, from records the map
+itself gives when it loads.
+
+See [`platform/scene3d/weather.cpp`](platform/scene3d/weather.cpp),
+[`platform/scene3d/wear.cpp`](platform/scene3d/wear.cpp),
+[`platform/shaders/world/wear.glsl`](platform/shaders/world/wear.glsl) and
+[`platform/games/doom/authored.c`](platform/games/doom/authored.c).
+
 ### Blood is made from the WAD too
 
 Hitscan attacks can leave splats on floors and walls, and corpses slowly grow
@@ -553,8 +671,173 @@ then dries darker and matte. Pools grow in visible steps.
 Bullet impacts leave marks as well and throw small chunks colored like the
 surface they hit.
 
-See [`platform/scene3d/blood.cpp`](platform/scene3d/blood.cpp) and
+With **Blood spray**, hits throw blood out the far side of the body and
+kills burst. Each drop's flight is worked out once, when it is thrown: it
+flies as a Doom-sized pixel speck and lands as a splat on the floor, a wall
+in its way or a low ceiling. Fresh wounds drip, bodies sliding across the
+floor smear it, and bodies thrown into a wall splash it. It has its own
+random numbers, so the game never notices.
+
+See [`platform/scene3d/blood.cpp`](platform/scene3d/blood.cpp),
+[`platform/scene3d/spray.cpp`](platform/scene3d/spray.cpp) and
 [`platform/scene3d/impacts.cpp`](platform/scene3d/impacts.cpp).
+
+### Shots go through monsters
+
+Where a bullet or pellet strikes a monster, its sprite is shot through. The
+hole is cut from the texels the shot crossed, with a ragged edge in the
+blood sprite's reds, a dark torn rim and a short smear, all in the WAD's own
+palette. It is drawn only: the game's hit test, damage and blood are as in
+vanilla.
+
+DOOM's sprites have no skeleton and no shared texture coordinates, so a hole
+has to find its place again on every frame. It remembers the texel it struck
+on the drawing showing at the moment of the hit, before the pain or death
+frame takes over. Every later frame looks for that patch of artwork: a first
+guess from where it sits among the drawing's rows, then a small search for
+the nearest match in palette colour and coverage. Matching always goes back
+to the original hit, never from frame to frame, so the hole doesn't drift.
+It runs along the shot through the body in the monster's own coordinates, so
+a hole shot from the front closes when the monster turns side-on. Close hits
+open it wider, hits next to each other merge, and the holes stay on the
+corpse.
+
+Where a bullet lands depends on the aim. With mouse look on, bullets go where
+you look: a shot at the head hits the head, and a shot over a shoulder
+misses. **Classic aim** in F4 brings DOOM's autoaim back for bullets: they
+find the monster in front of you and strike the middle of its height, and
+that is where the hole goes. Rockets, plasma and the BFG aim as in DOOM
+either way, and demos and netgames always aim as in vanilla.
+
+See [`platform/scene3d/wounds.cpp`](platform/scene3d/wounds.cpp) and
+[`platform/wound_attachment.h`](platform/wound_attachment.h).
+
+### Monsters die differently every time
+
+DOOM draws each monster's death once, from one angle, and plays it the same
+way every time. Here the drawing takes over at the killing blow and works out
+a death of its own from how the hit landed. The game's states, timing and
+corpse are untouched, and the variation comes from hashes, never from DOOM's
+random table, so demos stay in sync.
+
+- **Hits push.** Every hit leans a monster with the push the game gives it,
+  the upper body lagging behind, and it springs back. The killing blow jolts
+  hardest: a high hit throws the body back, a low one knocks the legs out,
+  the chainsaw crumples it, a gib hops it and fliers sway as they fall. The
+  bend is drawn in whole-pixel rows over the game's own frames and is gone by
+  the corpse frame.
+- **Every death keeps its own time.** The death frames keep their order, but
+  the time is shared out afresh between the reaction, the collapse and the
+  settle for each kill: one body snaps down, another hesitates and then
+  drops, another slumps. Monsters killed by one rocket take contrasting
+  timings on purpose, so a group doesn't fall in step. Now and then a hit
+  well off a monster's middle turns it on its own rotated frames before it
+  falls, a hard push steps it back on its walking frames, and a chainsaw kill
+  holds the pain frame a moment. The frames are mirrored so the body falls
+  away from the blow, and the frame it lands on flattens briefly as it
+  settles. Optionally, a monster killed facing away turns toward you before
+  its death frames, which are drawn facing the viewer, instead of snapping
+  round.
+- **Procedural falls.** Monsters standing on two legs can fall in ways their
+  drawings never show. Each gets a rig: hips, knees and ankles, where the
+  legs part, and the gun that hangs below the hips but moves with the torso.
+  The zombieman, shotgun guy and chaingunner are rigged by hand. For other
+  artwork the joints are found in the drawing itself, by following the two
+  legs up from the floor to where they meet. Every texel is then drawn as its
+  own small quad moved by the rig, bending smoothly over a few rows at each
+  joint, so the body stays in one piece and the pixels stay sharp. The hit
+  chooses the fall:
+  - A low or weak hit **sweeps the legs**. The knee on the hit's side gives,
+    the pelvis drops, and the torso balances, then goes over, toward the
+    weapon or away from it. The fall is simulated for each kill from the
+    hit. Partway down, the game's own lying drawing takes over where the two
+    silhouettes match best, and it lands under gravity.
+  - A hard hit is a **chest blast**. The shoulders snap back on the hit
+    drawing's rig while the legs hold, and a body thrown off its feet flies
+    in an arc before it lands, sooner and farther the harder the hit.
+  - A killing shot through the head **cuts the strings**. Both knees go at
+    once, the head snaps, and the body crumples nearly where it stood.
+
+Hand rigs hold only for the original artwork. Each is keyed to a hash of the
+sprite's pixels, so replaced art falls back to the joint finder, and a
+monster without two clear legs keeps its drawn death.
+
+The rigs and falls were worked out in a small lab outside the game: Python
+scripts in [`tests/`](tests/) that read a WAD and draw the poses side by side
+(`death_lab.py`, `death_pose.py`, `death_sim.py`, and `joint_finder.py`,
+which scores the joints it finds against the hand rigs). Related research on
+learning how a hand-drawn character deforms from its animation frames,
+[Neural Puppet: Generative Layered Cartoon Characters](https://arxiv.org/abs/1910.02060),
+helped inform these experiments. Nothing here is learned, though: the rigs
+are placed by hand or found by a fixed rule.
+
+All of it is drawing only. Hitboxes, damage, where the corpse lies and what
+monsters see are as in vanilla. Each piece has its own switch in F4's
+**Combat** section, and **Procedural falls** also offers each fall on its
+own, for judging them one at a time.
+
+See [`platform/scene3d/body_motion.cpp`](platform/scene3d/body_motion.cpp),
+[`platform/scene3d/death_director.cpp`](platform/scene3d/death_director.cpp),
+[`platform/scene3d/death_falls.cpp`](platform/scene3d/death_falls.cpp),
+[`platform/death_joints.h`](platform/death_joints.h) and
+[`platform/death_rigs_stock.h`](platform/death_rigs_stock.h).
+
+### Ragdolls are drawn back into sprites
+
+**Ragdoll falls** goes further than bending the drawing: the monster falls
+as a body in 3D, and a camera of its own draws it back into a Doom sprite.
+
+- **A body from the drawing.** The rigged pain drawing is raised into a
+  relief. Each texel rises as deep as the round tube the sprite lighting
+  already finds under it, and the side drawing (rotation 3) then sets how
+  far the body reaches forward and back, band by band, so a body lying down
+  is as deep as its own side view rather than a round bolster. The front is
+  painted from the front drawing and the back from the drawing seen from
+  behind; walls close the outline.
+- **A small skeleton.** Eleven points on the drawing's own rig (head, neck,
+  shoulders, spine, hips, knees and ankles) are integrated in game tics and
+  held together by bone lengths and joint limits. Muscles hold the standing
+  pose at first and let go on a schedule the hit sets. The floors around the
+  kill (steps, ledges, the lower floor at a stair edge) and the walls stop
+  it, so a body can fall down a step or slam into a wall and sink to sitting.
+- **The hit decides the fall.** A body can be thrown back, have its legs
+  swept, be spun from the side or have its strings cut by a head shot. While
+  it falls it is turned so that it lands with a drawn side (front or back)
+  facing up or toward the player, and nothing turns it once it lies.
+- **Back to 2D.** An orthographic camera draws the posed body into a square
+  picture in the WAD's own texels: quickly through the hit, then at the pace
+  of the monster's own death frames, and at the top of a throw and each
+  moment it touches down. The picture stands on an ordinary sprite card and
+  is lit like any sprite. Once the body lies still, its last picture is
+  baked into a plain corpse sprite.
+
+With **Shot deaths on strings**, two ragdolls in three killed by a blast to
+the chest from the front play the death their drawings show instead: the
+chest is yanked back as if on a stunt wire, the legs give way and the body
+sits back and lands hips first, then the back, the head last. Only hand
+rigs that fit it (the zombieman) do this.
+
+As with the other deaths it is drawing only: where the corpse lies, its
+hitbox and the game's timing are vanilla. F4 → Combat → **Ragdoll falls**
+(off by default; it needs **Varied deaths**).
+
+The ragdoll was worked out in the lab first. `death_hull.py` tried carving a
+hidden 3D puppet out of the eight walk rotations, `death_relief.py` the
+relief body, `death_ragdoll.py` the skeleton and its falls,
+`death_impostor.py` how to flatten the body back into 2D, and
+`ragdoll_settle.py` how bodies come to rest. `voxel_reference.py` and
+`voxel_relief.py` check the depth guess against an artist's voxel models of
+the monsters. The models are only a reference: they are read from a local
+folder and never shipped. `ragdoll_arena.py` builds small test maps (open
+floor, stairs, ledges, a wall behind, clutter) out of plain geometry, plays
+scripted kills in them and saves the falls as a contact sheet. Its
+`showcase` mode shoots a row of monsters, lets them lie, stands them up and
+shoots them again until you quit.
+
+See [`platform/scene3d/ragdoll.cpp`](platform/scene3d/ragdoll.cpp),
+[`platform/scene3d/ragdoll_body.cpp`](platform/scene3d/ragdoll_body.cpp),
+[`platform/scene3d/ragdoll.h`](platform/scene3d/ragdoll.h) and
+[`ragdoll-tuning-research.md`](ragdoll-tuning-research.md).
 
 ### Pixel art stays sharp
 
@@ -571,7 +854,7 @@ palette, including lighting, fog and bloom.
 Animated walls and flats crossfade between their frames. Doors, lifts, sprites
 and the camera are interpolated between DOOM's 35 Hz game tics.
 
-## How the sound cheats
+## How the sound works
 
 Sound gets the same treatment as the graphics, and it is as big a part of the
 project. The WAD's own effects still play as crunchy 8-bit samples, and
@@ -585,15 +868,15 @@ the game generates them. Each one is a small synth that models how the thing
 makes its sound: a ballast buzzing at twice the mains frequency, bubbles
 rising in pitch as they near the surface, a crack front branching through a
 pane, shards falling under DOOM's own gravity and ticking where they land.
-At startup, in a fraction of a second, they are all rendered in the same
-8-bit, 11 kHz form as DOOM's own effects, so they sit in the mix as if they had
-always been there. They are the same in every WAD, and which of them plays
+At startup they are rendered as 8-bit samples, like DOOM's own effects.
+Most use 11 kHz; glass uses 22 kHz to retain the bright collision detail
+above 5.5 kHz. They are the same in every WAD, and which of them plays
 where is read from the map's textures.
 
 The target is a late-90s A3D or EAX sound card, with a fairly short and lo-fi
 reverb. The settings are in the **Sound** tab of the F4 panel.
 
-### Quiet by design, so turn the music down
+### Quiet by design, so turn the music down if you want to experience it
 
 The soundscape is quiet on purpose. A lamp's buzz, distant bubbling and wind
 coming through a broken window are meant to be heard under the gunfire, and
@@ -632,8 +915,23 @@ moves.
   of glass on the way dulls it further.
 - **Sealed off:** with no way through at all, it is muffled heavily.
 
-Muffling only changes the tone. Volume is the same as in vanilla DOOM, so you
-can locate monsters by ear as well as before.
+Muffling only changes the tone, never the volume, so you can locate monsters
+by ear as well as before.
+
+### Sound fades as it does in air
+
+DOOM fades a sound in a straight line, from full strength at 160 units to
+nothing at 1200, so a monster across a big room sounds almost as near as one
+beside you. **Natural distance falloff**, on by default, fades it the way air
+does instead: half as strong each time the distance doubles, easing out to
+nothing at the same 1200 units. Gunshots and explosions are the exception.
+They carry two and a half times as far, faint and dull by then, and a
+breaking window twice as far, so a firefight in the next courtyard is heard
+as one. When every channel is busy, the faintest sound gives way rather than
+the oldest.
+
+DOOM's boss maps, which play every sound at full volume, stay as they are,
+and Heretic keeps its own curve.
 
 ### Rooms are measured with rays
 
@@ -650,22 +948,58 @@ dry.
 
 WADs have no material data, so materials are guessed from texture names.
 `STARTAN`, `COMP` and `METAL` ring like metal, `WOOD` and the panel textures
-sound dull, and flesh, liquids and dirt each absorb sound differently. Anything
-else counts as stone.
+sound dull, and flesh, liquids, dirt and carpet each absorb sound differently.
+A switch counts as the wall it is set into (`SW1STON1` is stone, `SW1WOOD`
+wood), and a short list of single textures corrects what the names get wrong,
+picked by ear and eye in the maps. Anything else counts as stone. Footsteps
+use the same materials, so the floor underfoot and the room's echo can't
+disagree.
+
+Each material also has a roughness, as surfaces do for light. Smooth panels
+send an echo back clean and keep a room ringing; rough stone and dirt scatter
+it, and the room goes flat. A texture's own artwork can add to that: the share
+of its texels lying in painted seams, joints, ribs and cracks, read the first
+time a ray meets it. Ribbed metal then rings less than sheet metal, and rubble
+less than plain blocks. The reading only roughens a material and never decides
+it, because against a hand-judged list of DOOM's surfaces it agrees only
+moderately.
 
 ### Echoes and a reverb tail
 
 The rays are grouped into eight directions around the player. Each group makes
 one echo, delayed by the round trip to its walls and panned by where they are
 relative to the way the player faces. A ninth echo comes off the ceiling.
+Each echo loses the treble its walls take, a wooden wall's duller than
+steel's, and off rough walls it is smeared into a short cluster spread a
+little around its direction.
 
 A small feedback delay network makes the late tail: eight damped delay lines
 mixed through a Householder matrix. Metal rooms keep their treble and wooden
-ones lose it. When the room changes, the echoes crossfade and the tail glides
-over a third of a second, so walking through a door doesn't click.
+ones lose it. In a rough room a chain of allpass filters sprays every sound
+into a dense wash before it enters the network, and one in each delay line
+keeps scattering it, so a stone castle goes flat while a steel tech room
+rings. When the room changes, the echoes crossfade and the tail glides over a
+third of a second, so walking through a door doesn't click.
 
 Far sounds send more to the reverb relative to the dry mix, so they sound
 further away as well as quieter.
+
+The player's own boots, splashes and equipment keep their source loudness
+in the room send: quiet movement stays quiet in the echoes too. Distance
+still makes these sounds relatively wetter as the listener moves away.
+
+### The hall next door
+
+From a corridor or a small room, some of the rays run out through an opening
+into a bigger space, much farther than the rest. Halfway from the opening to
+the far wall that space is measured as a room of its own, and it is heard
+through the opening with a second reverb: your own sounds reach into it and
+ring there faintly, and sounds made inside it echo as the hall does, not as
+the room you stand in. Only a space that is clearly bigger and rings longer
+counts, so stepping from a hall into a corridor still hears the hall, and
+the corridor seen from the hall adds nothing.
+
+See [`platform/audio/beyond.c`](platform/audio/beyond.c).
 
 ### The map hums
 
@@ -698,25 +1032,65 @@ Only nearby sources are heard, loud effects push the ambience down for a
 moment, and a fixture that is shot out goes quiet for the rest of the level.
 **Ambience volume** sets how loud it is next to the effects.
 
+**Alternative computer sounds** in **F4 → Sound → Made-up sounds** replaces
+the computer bleeps with a contained machine hum, fine hard-drive seeks,
+occasional relay clacks and electrical chatter. It is off by default and
+switches smoothly while playing. One continuous body follows the audible
+computers, with three activity takes sharing their volume budget; longer,
+independently timed loops keep busy computer rooms varied. The sounds are
+synthesized at startup as mono 8-bit, 11 kHz samples and use the same distance,
+muffling and room acoustics as the original ambience.
+
+**Inside the walls**, now and then, the base works. When a level starts, the
+one-sided walls are read for what might live behind them, and every so often
+one of those walls in reach plays it from a point along its face: water
+rushing through a pipe, a blast of steam, a duct, a press, a drip, metal
+settling. Only the body of the sound gets through, muffled as if through the
+wall, and nothing in it sounds like a person: no knocking, no steps. The
+sounds are rare and spread out, never the same kind twice running, and they
+go quiet while you fight, starting again a while after it is calm.
+
+See [`platform/audio/hidden.c`](platform/audio/hidden.c) and
+[`platform/audio/hidden_synth.c`](platform/audio/hidden_synth.c).
+
 ### Sounds DOOM never had
 
 The rest of the made-up sounds are effects that answer what happens in the
-fight. Each comes in six variations, and the same one never plays twice in a
-row.
+fight. Each comes in six variations, footsteps in sixteen, and neither of the
+last two takes plays again.
 
 - **Sparks:** tech walls crackle, fizz or zap after the gunshot that hit them.
 - **Dying lights:** a lamp's hum sputters into a pop and a few bits of tube; a
   screen bursts into static and thumps off.
-- **Breaking glass:** each shard falls from its place in the pane under DOOM's
-  gravity and ticks where it lands, with a longer break for big windows.
+- **Breaking glass:** each shard retains its own short, irregular resonances
+  as it catches the frame, falls under DOOM's gravity, rebounds and tips
+  across its edges. Fresh collisions keep the crash going, with a longer
+  break for big windows.
   **Breaking glass** picks how the break itself sounds: **Shatter**, a hard
-  crack and a rush of splinters, or **Fracture**, a crack front branching
-  through the pane as hundreds of tiny clicks, with no noise in it at all.
-- **Footsteps:** the player's steps sound by what the floor is, stone, metal,
-  wood or something soft like grass and carpet, about twice a second walking
-  and three times running. Water splashes, nukage, slime, blood and lava gloop,
-  and monsters wading through liquids splash too. Monsters on dry floors stay
-  as silent as ever, so hearing tells no more about where they are than before.
+  crack followed by the clatter of larger pieces, or **Fracture**, a crack front
+  branching through the pane as hundreds of tiny clicks. Both continue into
+  the same model of falling pieces. The [synthesis notes](platform/audio/glass_synthesis.md)
+  describe the reference measurements and contact model.
+- **Footsteps:** the player is heavy and wears combat boots. Each step is a
+  dense, driven impact with the body's weight in it and the sole settling a
+  moment later, coloured by the floor: grit on stone, a short metallic edge
+  under a cushioning rubber sole on metal backed by concrete or earth, a
+  knock on wood, a crunch on grass and dirt, muffled on carpet. Running lands
+  harder, on the ball of the foot, and pushes off with a scrape, and a landing
+  is harder the faster the fall. Just after each step
+  the kit settles: buckles and pouches with a light weapon, a long gun
+  knocking on its sling, the rocket launcher or BFG thudding with its rounds
+  rattling, and the click of armour when you wear it. Steps come about twice a
+  second walking and three times running. Water splashes, nukage, slime, blood
+  and lava gloop, and monsters wading through liquids splash too. Monsters on
+  dry floors stay as silent as ever, so hearing tells no more about where they
+  are than before.
+- **Gore:** a kill's wet burst and a body slapping into the floor or a wall,
+  filtered noise only, played quietly under the monster's own death sound.
+- **Near misses:** an enemy's bullet from far off that passes close by
+  without hitting you whizzes past your head, a fluttering whistle. Real
+  bullets wouldn't sound like that, but it tells you you're under fire when
+  the shooter is too far away to hear well.
 
 `doom-sfx-render` writes all of them to WAV files, dry and in rooms, for
 listening outside the game:
@@ -784,11 +1158,13 @@ See
 [`platform/audio/acoustic_graph.c`](platform/audio/acoustic_graph.c),
 [`platform/audio/occlusion.c`](platform/audio/occlusion.c),
 [`platform/audio/room.c`](platform/audio/room.c),
+[`platform/audio/relief.c`](platform/audio/relief.c),
 [`platform/audio/reverb.c`](platform/audio/reverb.c),
 [`platform/audio/ambience_map.c`](platform/audio/ambience_map.c),
 [`platform/audio/ambience.c`](platform/audio/ambience.c),
 [`platform/audio/made_bank.c`](platform/audio/made_bank.c),
 [`platform/audio/steps.c`](platform/audio/steps.c),
+[`platform/audio/flyby.c`](platform/audio/flyby.c),
 the synths in [`platform/audio/`](platform/audio/) (`*_synth.c`),
 [`platform/audio/resample.c`](platform/audio/resample.c),
 [`platform/audio/treble.c`](platform/audio/treble.c),
@@ -812,6 +1188,8 @@ Please don't commit or upload commercial WAD files to this repository.
 
 You need CMake 3.21+ and a C11/C++17 compiler (Apple Clang, Clang, GCC or
 Visual Studio 2022). SDL3 is downloaded automatically if it isn't installed.
+The build makes both programs, `doom` (`Play DOOM.app` on the Mac) and
+`derp-heretic`; on the Mac the Heretic program goes inside the app.
 
 ```sh
 cmake -S . -B build/play -DCMAKE_BUILD_TYPE=Release -DDOOM_BUILD_SDL=ON \
@@ -822,11 +1200,12 @@ ctest --test-dir build/play --output-on-failure
 
 ## License
 
-Copyright © 2026 Robert Heidenreich. Licensed under the GNU General Public
+Copyright © 2026 robongrui. Licensed under the GNU General Public
 License version 3 ([`LICENSE.TXT`](LICENSE.TXT)), with one additional term
 under section 7(b): redistributions and derivative works containing the
-original Duct-Tape DOOM contributions must preserve the attribution
-"Duct-Tape DOOM — https://github.com/robongrui/duct-tape-doom". The full
+original DERP contributions must preserve the attribution
+"DERP, the DOOM Engine Remaster Project — https://github.com/robongrui/derp".
+The full
 notice is in [`NOTICE.txt`](NOTICE.txt).
 
 The DOOM source by id Software, which this is built on, is GPL version 2 or

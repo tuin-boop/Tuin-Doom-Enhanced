@@ -17,8 +17,11 @@ extern "C" {
 void P_ExplodeMissile(mobj_t *m);
 extern int p_breakablewalls;
 }
+extern "C" {int sv_chain_collapses=1,sv_hanging_fragments=1,sv_collapse_size=12;}
+extern "C" int SV_Edited(float x,float y,float z);
 static lab::Scene scene;
 static lab::MapWorld mapWorld;
+extern "C" int SV_Edited(float x,float y,float z){return SV_MapMode()&&mapWorld.edited({x,y,z});}
 static std::vector<std::array<fixed_t,2>> mapHeights;
 static unsigned serial=~0u;
 static std::string saved;
@@ -143,11 +146,20 @@ static int solidPositionUncached(mobj_t *m,fixed_t x,fixed_t y,fixed_t *floor,fi
  if(mapped&&!SV_MapPosition(m,x,y))return -1;
  auto fits=[&](lab::Vec at){return mapped?mapWorld.fits(at,radius,height):scene.fits(at,radius,height);};
  if(!fits(p)){
-  bool fits=false;
+  bool stepped=false;
+  // A crater can lower support by less than our two-unit search stride.
+  // Test the exact sector floor first: a full-height actor in a low room
+  // cannot overshoot that floor without colliding with the ceiling.
+  if(mapped&&!(m->flags&MF_MISSILE)){
+   float floorZ=unit(R_PointInSubsector(x,y)->sector->floorheight);
+   if(floorZ>p.z&&floorZ-p.z<=24&&fits({p.x,p.y,floorZ})){
+    p.z=floorZ;stepped=true;
+   }
+  }
   // Doom step height is retained; missiles cannot step up.
-  for(float dz=2;dz<=((m->flags&MF_MISSILE)?0:24);dz+=2)
-   if(mapped?mapWorld.fits(p+lab::Vec{0,0,dz},radius,height):scene.fits(p+lab::Vec{0,0,dz},radius,height)){p.z+=dz;fits=true;break;}
-  if(!fits)return 0;
+  for(float dz=2;!stepped&&dz<=((m->flags&MF_MISSILE)?0:24);dz+=2)
+   if(fits(p+lab::Vec{0,0,dz})){p.z+=dz;stepped=true;break;}
+  if(!stepped)return 0;
  }
  // Missiles use the swept impact ray and the capsule fit above. They do not
  // stand on slopes, so searching for walkable support below/above a crater
@@ -207,9 +219,49 @@ void SV_Refresh(mobj_t *m){
  if(SV_Position(m,m->x,m->y,&floor,&ceiling)==1){m->floorz=floor;m->ceilingz=ceiling;}
  if(M_CheckParm((char*)"-profilesolid")){double ms=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-started).count();if(ms>.3)printf("SOLID support tic %d type %d flags %x %.3f ms\n",gametic,m->type,m->flags,ms);}
 }
+struct PendingCollapse {size_t cut;int due,generation;};
+struct FallingSupport {lab::Vec start;int due,generation;};
+static std::vector<PendingCollapse> pendingCollapses;
+static std::vector<FallingSupport> fallingSupports;
+static unsigned collapseLevel=~0u;
+static int collapseGeneration=0,collapseTic=-1;
+static void impact(float *point,int owner,float radius,float depth);
+static void collapseSync(){
+ if(collapseLevel!=r_levelserial||!sv_chain_collapses||!p_breakablewalls){pendingCollapses.clear();fallingSupports.clear();collapseLevel=r_levelserial;}
+}
+static void tickCollapses(){
+ collapseSync();if(!sv_chain_collapses||!p_breakablewalls||collapseTic==leveltime||leveltime%4)return;collapseTic=leveltime;
+ for(auto it=pendingCollapses.begin();it!=pendingCollapses.end();++it)if(it->due<=leveltime){
+  auto item=*it;pendingCollapses.erase(it);
+  auto begin=std::chrono::steady_clock::now();
+  auto removed=mapWorld.crumble(std::clamp(sv_collapse_size,4,24),item.cut,24);
+  if(M_CheckParm((char*)"-profilesolid"))printf("SOLID collapse tic %d cut %zu removed %zu %.3f ms\n",leveltime,item.cut,removed.size(),std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-begin).count());
+  int falling=0;
+  for(auto p:removed){
+   if(R_CraterCrumble)R_CraterCrumble(p.x,p.y,p.z);
+   if(item.generation>=2||falling>=2||fallingSupports.size()>=8)continue;
+   lab::Hit hit;
+   if(mapWorld.ray(p,{0,0,-1},192,hit)&&hit.distance>12){
+    int delay=int(std::sqrt(2*hit.distance/420)*TICRATE);
+    fallingSupports.push_back({p,leveltime+std::max(4,delay),item.generation+1});++falling;
+   }
+  }
+  break;
+ }
+ for(auto it=fallingSupports.begin();it!=fallingSupports.end();++it)if(it->due<=leveltime){
+  auto fall=*it;fallingSupports.erase(it);lab::Hit hit;
+  if(mapWorld.ray(fall.start,{0,0,-1},192,hit)&&hit.normal.z>.5f){
+   float point[6]={hit.point.x,hit.point.y,hit.point.z,hit.normal.x,hit.normal.y,hit.normal.z};
+   collapseGeneration=fall.generation;impact(point,0,6,.4f);collapseGeneration=0;
+   if(R_RubbleImpact)R_RubbleImpact(MT_TROOPSHOT,point[0],point[1],point[2],point[3],point[4],point[5]);
+  }
+  break;
+ }
+}
 void SV_Tick(){
  if(!SV_Active()||!players[consoleplayer].mo)return;
  if(SV_MapMode()){
+  tickCollapses();
   for(int i=0;i<numsectors;++i)if(mapHeights[i][0]!=sectors[i].floorheight||mapHeights[i][1]!=sectors[i].ceilingheight){
    SV_SectorChanged(&sectors[i]);
   }
@@ -293,7 +345,15 @@ static void impact(float *point,int owner,float radius,float depth=0){
    int(applied),center.x,center.y,center.z,mapWorld.sample(origin+inward*.5f));
   if(depth>0&&depth<=.5f&&R_SurfaceChip)R_SurfaceChip(point[0],point[1],point[2],point[3],point[4],point[5]);
   if(applied){
-   for(auto p:mapWorld.crumble())if(R_CraterCrumble)R_CraterCrumble(p.x,p.y,p.z);
+   collapseSync();
+   // Dynamic doors/lifts retain their existing immediate tiny-fragment cleanup.
+   if(sv_chain_collapses&&sector<0&&radius>=4){
+    // A full queue drops extra cosmetic support checks rather than falling
+    // back to synchronous scans during sustained plasma fire.
+    auto nearby=std::find_if(pendingCollapses.begin(),pendingCollapses.end(),[&](const auto &p){return mapWorld.cutNear(p.cut,center,24);});
+    if(nearby!=pendingCollapses.end()){nearby->cut=mapWorld.cutCount()-1;nearby->generation=std::min(nearby->generation,collapseGeneration);}
+    else if(pendingCollapses.size()<16)pendingCollapses.push_back({mapWorld.cutCount()-1,leveltime+(sv_hanging_fragments?18:1),collapseGeneration});
+   }else for(auto p:mapWorld.crumble())if(R_CraterCrumble)R_CraterCrumble(p.x,p.y,p.z);
   }
   return;
  }
@@ -313,6 +373,7 @@ void SV_Missile(mobj_t *m){
  P_UnsetThingPosition(m);
  m->x=(fixed_t)((hit[0]+hit[3]*.2f)*FRACUNIT);m->y=(fixed_t)((hit[1]+hit[4]*.2f)*FRACUNIT);m->z=(fixed_t)((hit[2]+hit[5]*.2f)*FRACUNIT);
  P_SetThingPosition(m);
+ if(P_RomeroStick(m,hit[3],hit[4],hit[5]))return;
  pendingMissile=m;pendingOwner=owner;std::copy(hit,hit+6,pendingPoint);
  P_ExplodeMissile(m);
  pendingMissile=nullptr;
@@ -396,6 +457,7 @@ int SV_Save(unsigned char *data){
  int length=(int)saved.size();memcpy(data,saved.data(),length);memcpy(data+length,&length,4);memcpy(data+length+4,"SVEN",4);return length+8;
 }
 void SV_Load(const unsigned char *data,int length){
+ pendingCollapses.clear();fallingSupports.clear();collapseLevel=r_levelserial;
  if(!SV_Active()||length<8||memcmp(data+length-4,"SVEN",4))return;
  int size;memcpy(&size,data+length-8,4);if(size<0||size>length-8)return;
  std::string bytes((const char*)data+length-8-size,size);std::istringstream stream(bytes,std::ios::binary);
@@ -405,5 +467,9 @@ void SV_Load(const unsigned char *data,int length){
   mapWorld.reset(readMapSource());mapHeights.clear();
   for(int i=0;i<numsectors;++i)mapHeights.push_back({sectors[i].floorheight,sectors[i].ceilingheight});
   if(!mapWorld.load(stream))printf("Solid map damage record was rejected; no geometry edits restored.\n");
+  else if(sv_chain_collapses){
+   size_t first=mapWorld.cutCount()>16?mapWorld.cutCount()-16:0;
+   for(size_t i=first;i<mapWorld.cutCount();++i)if(mapWorld.staticCut(i))pendingCollapses.push_back({i,leveltime+18,0});
+  }
  }else {scene.load(stream);previousDoorZ=scene.doorZ;}
 }

@@ -101,7 +101,7 @@ takes a screenshot.
 - **Anti-aliasing (MSAA):** off by default, or 2x, 4x or 8x as far as the GPU offers; smooths the edges of walls, floors and ledges while texels and sprites stay crisp.
 - **Field of view:** 60–120 degrees, measured against the classic 4:3 view.
 - **Widescreen:** show more world at the sides rather than stretching it.
-- **Mouse look, crosshair and FPS display:** optional toggles.
+- **Mouse look, crosshair and FPS display:** optional toggles. With mouse look, **Invert mouse look** (off by default) tilts the view down when you push the mouse forward, and **Classic aim** (off by default) lets bullets autoaim as in DOOM instead of going where you look.
 - **Retro scanlines** and **Doom palette colors:** the palette option quantizes the final image, including colored lighting, fog and bloom, to the WAD palette; off by default.
 
 **Textures**
@@ -112,7 +112,7 @@ takes a screenshot.
 - **Emissive textures:** glowing lamp strips, computer displays, lava and nukage, with soft bloom and colored light on nearby surfaces. The room's own light takes their color where they light it, monsters and the weapon included, and wall panels light only what they face. A lamp lights as strongly as its sector's light level says, so a strip the mapper set only a notch above its room stays a dim fixture. In blinking and strobing sectors the lamps switch off and on, light and all; in glowing and fire-flickering ones they fade up and down with the sector.
 - **Glowing eyes:** monsters' eyes glow in the dark, with a little bloom when emissive textures are on. The stock monsters' glowing pixels are picked by hand per frame; other artwork is searched for eyes painted in a color the body never uses.
 - **Glossy monitor screens:** screens in computer textures get curved CRT glass that bends the picture and catches highlights.
-- **Window glass:** windows found in the map's geometry get a pane of glass with grime, painted shine streaks and highlights from lamps, shots and the flashlight. The first shot, projectile or blast through a window, yours or a monster's, shatters it into shards; shots and sight still pass exactly as in vanilla. **Glass reflections** mirror the room in the window you look at, monsters and yourself included, at the liquid reflections' resolution, and show a snapshot of the surroundings in every other window; it costs a few milliseconds only while you look at a window.
+- **Window glass:** windows found in the map's geometry get a pane of glass with grime, painted shine streaks and highlights from lamps, shots and the flashlight. The first shot, projectile or blast through a window, yours or a monster's, shatters it into large shards that tumble, catch reflections and bounce; shots and sight still pass exactly as in vanilla. **Glass reflections** mirror the room in the window you look at, monsters and yourself included, at the liquid reflections' resolution, and show a snapshot of the surroundings in every other window; it costs a few milliseconds only while you look at a window.
 
 **Lighting**
 
@@ -133,21 +133,28 @@ takes a screenshot.
 - **Atmospheric fog:** height fog with soft cloud layers over pits, liquids and damaging floors. Toggle it off for a clearer view or a lighter GPU workload.
 - **Sunbeams** (with sun shadows, optionally **scattering** brighter toward the sun), **sun in the sky** and **dust motes** that glint in sunbeams and the flashlight beam.
 - **Heat haze:** rows of Doom pixels shimmer sideways at the tic rate above lava, red-hot damaging floors and flames.
-- **Blood splats and pools:** hitscan hits leave splats on the floor and on walls close behind the target, and corpses grow a pool in steps. **Wet blood shine** makes fresh blood glint under dynamic lights before it dries matte.
+- **Embers:** a few sparks rise from torches and fires and cool as they climb; Heretic's wind carries them off.
+- **Blood splats and pools:** hitscan hits leave splats on the floor and on walls close behind the target, and corpses grow a pool in steps. **Wet blood shine** makes fresh blood and wound edges glint under dynamic lights; floor blood dries matte.
+- **Wound holes:** bullets and pellets shoot see-through holes in monsters, with ragged bloody edges and dark rims. The holes follow the animation, widen with close hits, close when seen from the side and stay on the corpse. Drawing only.
+- **Varied deaths:** each death is retimed for that kill, falls away from the blow and settles as it lands; now and then a hit off the middle turns the monster or a hard push steps it back. **Dying turn to face you** (off by default) turns a monster killed facing away toward you first.
+- **Procedural falls:** monsters on two legs, rigged by hand or by joints found in their art, fall the way the hit says: a low or weak hit sweeps the legs, a hard one is a chest blast, a killing head shot cuts the strings. The fixed choices play one fall every time, for judging it.
+- **Death reactions** and **Hit flinches:** dying monsters jolt with the killing blow and living ones lean with every hit and spring back; **Reaction strength** sets how far.
 - **Soft effect sprites:** explosions, puffs and teleport fog no longer slice into walls, and dissolve on an ordered dither where they meet floors and ceilings.
 - **Shootable lights:** a shot, fireball or blast into a lamp, light strip or screen breaks it. It sputters out, and a moment later the room loses the light it gave, down to near black in rooms lit only by their lamps. Lamps count near misses; screens need a hit on the glass. Render-only: monsters see as before, and a reload brings the lights back. Needs emissive textures.
 - **Kill shots carry on:** a bullet that kills what it hits glances on past the body, so a fight can shoot out the lights behind the monsters. Sparks and lights only; the game still sees the shot stop.
-- **Liquids:** reflections of the scene in nearby water (rendered a second time at half resolution), optionally in **retro PS1 style** at one-eighth resolution with palette colors; nukage, slime, blood and lava do not mirror the room; caustics on the surrounding walls and optionally the ceilings; damp shores, where the walls and banks just above the liquid turn darker; and splashes with ripple rings where things land or wade.
+- **Liquids:** reflections of the scene in nearby water (rendered a second time at half resolution), optionally in **retro PS1 style** at one-eighth resolution with palette colors; nukage, slime, blood and lava do not mirror the room; caustics on the surrounding walls and optionally the ceilings; damp shores, where the walls and banks just above the liquid turn darker; **glowing liquid edges**, the strip the game paints on its edge textures carried onto every wall meeting nukage, slime or lava; **shore ripples** running out from the walls; and splashes with ripple rings where things land or wade.
 
 **Sound**
 
 - **Music:** SoundFont (default), OPL FM, or on the Mac the system synthesizer; see below.
 - **Sample playback:** Original holds each 11 kHz sample, raw and gritty, as vanilla does; Smooth and Clean read between the samples and take out the metallic sizzle. With either, **Made-up treble** puts back treble the samples never had.
-- **Sparks, dying lights and glass:** sounds DOOM never had, synthesized at startup as 8-bit samples: tech walls crackle where they are shot, lamps sputter out, screens die in static and windows break. **Breaking glass** picks Shatter (a crack and a rush of splinters) or Fracture (a crack front branching through the pane).
-- **Footsteps and splashes:** your steps sound by the floor (stone, metal, wood, grass and carpet); liquids splash or gloop, and monsters wading through them splash too. Monsters on dry floors stay silent, as in vanilla.
+- **Sparks, dying lights and glass:** sounds DOOM never had, synthesized at startup as 8-bit samples: tech walls crackle where they are shot, lamps sputter out, screens die in static and windows break. **Breaking glass** picks Shatter (a hard crack and the clatter of larger pieces) or Fracture (a crack front branching through the pane); both go on into the pieces falling and bouncing.
+- **Footsteps and splashes:** heavy boots that sound by the floor (stone, metal, wood, grass and carpet), harder when running or landing, with your kit settling after each step by the weapon you carry and your armour. Liquids splash or gloop, and monsters wading through them splash too. Monsters on dry floors stay silent, as in vanilla.
+- **Near misses:** an enemy's bullet from far off that passes close by whizzes past your head.
 - **Ambience:** lamps and computers hum, nukage and blood bubble, lava rumbles, fire crackles, water drips and wind blows under the sky, wherever the map's textures show them. Window glass dulls the wind until it is shot, shot-out fixtures go quiet, and loud effects push it all down for a moment. **Ambience volume** sets how loud it is next to the effects.
 - **Room acoustics:** echoes and a reverb tail measured from the room around you; **Echo and reverb** sets how loud.
-- **Muffled behind walls** and **Duller with distance:** sounds you can't see find their way through the map's openings and come through duller the longer the way round, and more so through closed doors and glass. Far sounds lose their treble. Loudness stays as in vanilla.
+- **Muffled behind walls** and **Duller with distance:** sounds you can't see find their way through the map's openings and come through duller the longer the way round, and more so through closed doors and glass. Far sounds lose their treble. Both change only the tone, not the loudness.
+- **Natural distance falloff:** far sounds fade as in air, half as strong per doubling of distance, instead of DOOM's straight fade; gunfire and blasts carry farther, faint and dull. DOOM only.
 
 **Performance** (off by default; the first two need baked static lights)
 
@@ -197,9 +204,11 @@ including damage and bonus palette shifts. Launch with `-palette 1` to enable
 it or `-palette 0` to disable it. This art pass intentionally changes colored
 lights and can produce visible color bands.
 
-Mouse look tilts the camera. Shooting retains DOOM's automatic vertical aiming;
-when it finds no target, a bullet shot follows the view pitch instead of flying
-level and can hit floors and ceilings. Demos and netgames keep vanilla aiming.
+Mouse look tilts the camera, and bullets go where you look: from your eye along
+the view, hitting floors and ceilings too, so you can miss. **Classic aim** in F4
+brings back DOOM's automatic vertical aiming for bullets, following the view
+only when there is no target. Rockets, plasma and the BFG aim as in DOOM either
+way, and demos and netgames keep vanilla aiming.
 Graphics choices are saved in `graphics.cfg`. F4 and F7 replace the original
 sound-menu and end-game shortcuts; those actions are still in the game menu.
 Screenshots capture the full display resolution and go into `Screenshots`

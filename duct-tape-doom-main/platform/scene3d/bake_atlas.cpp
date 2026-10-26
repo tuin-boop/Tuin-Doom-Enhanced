@@ -109,6 +109,7 @@ void uploadWallBake() {
     if(!wallBakeTexture)I_Error((char*)"Could not allocate surface maps");
 }
 void uploadFlatLight() {
+    bakeWetness(); // The ground's wetness under the rain rides in the floor light's alpha.
     flatLightTexture=gpuCreateTexture(GpuFormat::RGBA8,mapWidth,mapHeight*4,flatLightCells.data(),mapWidth*4);
     if(!flatLightTexture)I_Error((char*)"Could not allocate surface maps");
 }

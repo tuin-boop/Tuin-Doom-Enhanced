@@ -7,7 +7,9 @@ extern "C" {
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <string>
 #include "settings_panel.h"
+#include "game_profile.h"
 
 namespace doom3d {
 namespace {
@@ -17,6 +19,9 @@ const char *solidMapText(const char* mapped,const char* legacy){
 const char *effectCost(const char *key) {
     struct Cost {const char *key,*note;};
     static const Cost costs[]={
+        {"chain_collapses","BOUNDED GAMEPLAY COST: one local support check every four tics; at most two secondary generations."},
+        {"environment_budget","BOUNDED COST: 64 / 128 / 256 extra dust particles."},
+        {"electrical_damage","BOUNDED COST: 16 faults, at most two flashes per tic."},
         {"shore_ripples","HIGH COST: many shoreline particles. Off by default."},
         {"reflections","HIGH GPU COST: renders the reflected scene again."},
         {"glass_reflections","HIGH GPU COST: another reflected scene when visible."},
@@ -51,10 +56,22 @@ Option slider(const char *key,const char *title,float *number,double low,double 
     option.number=number;option.low=low;option.high=high;option.step=step;option.enabled=enabled;option.items=labels;
     return option;
 }
+bool hasGlass(const Settings&) {return Game_HasEffect(GAME_EFFECT_WINDOW_GLASS)!=0;}
+bool hasFlashlight(const Settings&) {return Game_HasEffect(GAME_EFFECT_FLASHLIGHT)!=0;}
+bool hasFalloff(const Settings&) {return Game_HasEffect(GAME_EFFECT_NATURAL_FALLOFF)!=0;}
+bool hasFreeAim(const Settings &s) {return s.look&&Game_HasEffect(GAME_EFFECT_FREE_AIM)!=0;}
+bool hasAuthored(const Settings&) {return Game_HasEffect(GAME_EFFECT_AUTHORED_EPISODES)!=0;}
+}
+
+void fitGame(Settings &s) {
+    s.deathRagdoll=s.deathGuided=s.deathBlast=0; // Keep the existing, individually toggled death behavior.
+    if(!Game_HasEffect(GAME_EFFECT_WINDOW_GLASS))s.windowGlass=0;
+    if(!Game_HasEffect(GAME_EFFECT_SHOOTABLE_LIGHTS))s.shootableLights=0;
+    if(!Game_HasEffect(GAME_EFFECT_NATURAL_FALLOFF))s.naturalFalloff=0;
 }
 
 std::vector<OptionTab> optionTabs(Settings &s) {
-    return {
+    std::vector<OptionTab> tabs={
         {"Display",{
             {"Renderer",{
                 check("fullscreen","Fullscreen (F11)",&s.fullscreen,"Use the entire display. F11 also toggles fullscreen during play."),
@@ -74,14 +91,38 @@ std::vector<OptionTab> optionTabs(Settings &s) {
                 slider("hud_scale","Modern HUD size",&s.hudScale,50,100,5,"Scale the modern HUD from 50 to 100 percent.",[](const Settings &d){return d.accelerated&&d.hudStyle!=0;}),
                 choice("hud_layout","Modern HUD layout",&s.hudLayout,{"Bottom corners","Bottom centered","Top corners"},{0,1,2},"Choose where the health, armor, ammo and face panels sit.",[](const Settings &d){return d.accelerated&&d.hudStyle!=0;}),
                 check("look","Mouse look",&s.look,"Mouse look tilts the camera; combat keeps DOOM's automatic aiming."),
+                check("invert_look","Invert mouse look",&s.invertLook,"Moving the mouse forward tilts the view down, like a flight stick.",
+                    [](const Settings &d){return d.look!=0;}),
+                check("classic_aim","Classic aim",&s.classicAim,
+                    "Bullets aim themselves at a monster in front of you, as in DOOM, and hit it in the middle; with none in front "
+                    "they follow the view. Off: they go exactly where you look, so you can miss, and where you hit is where the "
+                    "wound and the fall come from. Rockets, plasma and the BFG aim as in DOOM either way.",hasFreeAim),
                 check("crosshair","Crosshair",&s.crosshair,"A small crosshair in the middle of the view."),
                 check("combat_notices","Combat achievements",&s.combatNotices,"Show close calls, multi-kills, barrel chains, fist kills and perfect clears. Boss, pickup and secret messages stay enabled."),
                 check("fps","Show FPS and frame time",&s.fps,"Fullscreen counter: FPS, average frame time and the slowest frame in the last second. FPS also appears in the window title.")}},
+            {"Saving",{
+                check("quick_confirm","Confirm quicksave and quickload",&s.quickConfirm,
+                    "Ask before a quicksave overwrites its slot or a quickload replaces the game in progress. Off: the keys act at once.")}},
             {"Retro look",{
+                check("ps2_style","PS2-style filter",&s.ps2Style,"Chunkier surface textures, stepped shading and a subtle warm color finish. Keeps geometry, collision, HUD and menus unchanged. Off restores your normal rendering settings.",[](const Settings &d){return d.accelerated!=0;}),
                 check("retro","Retro scanlines",&s.retro,"Dark lines between the rows of the picture, like an old CRT monitor."),
                 check("palette","Doom palette colors",&s.palette,"Quantize the final lighting and fog to the current WAD palette.")}}}},
+        {"Environment",{
+            {"Effect controls",{
+                check("environment_effects","Environmental reactions",&s.environmentEffects,"Master switch for pressure dust, settling dust, debris splashes and electrical sputtering. Collapse gameplay has separate controls under Destruction."),
+                choice("environment_budget","Particle budget",&s.effectBudget,{"Low","Balanced","High"},{64,128,256},"Maximum active environmental dust particles. Existing weapon and liquid effects retain their own caps.",[](const Settings &d){return d.environmentEffects!=0;})}},
+            {"Blasts and rubble",{
+                check("rocket_chunks","Rocket voxel chunks",&s.rocketChunks,"Rocket impacts throw up to six wall-colored tumbling chunks. Cosmetic, with a shared cap of 48 pieces."),
+                check("pressure_waves","Blast pressure waves",&s.pressureWaves,"Blasts push loose debris and throw out a ground dust wave. Cosmetic: does not push actors.",[](const Settings &d){return d.environmentEffects!=0;}),
+                check("settling_dust","Destruction dust and settling",&s.settlingDust,"Short dust clouds settle into fading specks near damaged surfaces.",[](const Settings &d){return d.environmentEffects!=0;}),
+                check("debris_liquids","Debris liquid reactions",&s.debrisLiquids,"Falling rubble makes small liquid-colored splashes. Heavy pieces sink; light flecks linger on the surface.",[](const Settings &d){return d.environmentEffects&&d.splashes;})}},
+            {"Wind and airborne dust",{
+                check("outdoor_wind","Outdoor wind dust",&s.outdoorWind,"Sparse dust gusts and tiny ground debris under open sky. Sheltered rooms stay clear; rain reduces dust."),
+                slider("outdoor_wind_density","Wind dust density",&s.outdoorWindDensity,0.25,2,0.25,"Amount of windblown dust. Particle count stays capped.",[](const Settings &d){return d.outdoorWind!=0;})}},
+            {"Leaks and machinery",{
+                check("electrical_damage","Damaged machinery sputtering",&s.electricalDamage,"Broken powered panels and lights briefly sputter with sparks and local flashes. Requires Shootable lights and emissive lighting.",[](const Settings &d){return d.environmentEffects&&d.shootableLights&&d.emissive;})}}}},
         {"Effects",{
-            {"Doors",{
+            {"Destruction and doors",{
                 check("breakable_walls","Breakable surfaces (experimental)",&s.breakableWalls,solidMapText("Rocket and barrel blasts excavate shared wall, floor and ceiling geometry. Off prevents new damage; existing passages remain until restarting the level. New solid-map saves retain damage.","Rocket impacts excavate walls, floors and ceilings. Wall depth stops before the next map boundary. Off restores original surfaces and collision; existing damage returns when enabled.")),
                 choice("wall_damage","Wall damage",&s.wallDamage,{"100%","150%","200%","250%","300%","350%","400%","450%","500%"},{100,150,200,250,300,350,400,450,500},solidMapText("Strength of new excavation: 100% is normal; 500% digs up to five times deeper per impact. Does not change damage to actors.","Excavation strength per hit against walls and doors. 100% is normal; 500% adds five times as much damage per hit, so breaches take fewer shots. Applies to new damage only. Monster damage and floor/ceiling craters are unchanged."),[](const Settings &d){return d.breakableWalls!=0;}),
                 check("through_walls","Through-wall breaches (experimental)",&s.throughWalls,solidMapText("Allows new impacts to open passages through walls. Off limits future cuts to retain backing before the next room; existing breaches remain. Can bypass level progression.","Repeated rocket hits can breach walls up to 256 map units thick into another room. Requires Breakable surfaces. Outside-map walls stay sealed. Off restores the backing; damage is retained.")),
@@ -90,10 +131,16 @@ std::vector<OptionTab> optionTabs(Settings &s) {
                 check("deeper_digging","Deeper digging (up to 4096 units)",&s.deeperDig,solidMapText("Increases the maximum depth of new excavation from 256 to 4096 map units. New tunnels remain enclosed by solid material. Existing cuts are retained when disabled.","Extends wall/door breaches to 4096 units and enclosed floor/ceiling digging to 256 units. Requires Through-wall breaches or Breachable doors plus Breakable surfaces. Only connects to a valid room; outside-map walls stay sealed. Off restores standard limits without erasing damage."),[](const Settings &d){return d.breakableWalls&&(d.throughWalls||d.breachDoors);}),
                 check("breach_doors","Breachable doors (can break maps)",&s.breachDoors,"WARNING: Allows blasting through doors, including locked doors. Can bypass keys, switches and progression and break map scripts. Off by default. Requires Breakable surfaces. Holes move with the door. Independent of Through-wall breaches."),
                 check("door_sparks","Opening door sparks",&s.doorSparks,"Small sparks along the side tracks while a nearby door opens. Cosmetic only.")}},
+            {"Collapse gameplay",{
+                check("chain_collapses","Local chain collapses",&s.chainCollapses,"Unsupported fragments near new damage fall away. Falling fragments can chip another surface below. Limited to two generations; saved geometry and collision stay together. Requires Breakable surfaces and solid-map mode.",[](const Settings &d){return d.breakableWalls!=0;}),
+                check("hanging_fragments","Delay before fragments fall",&s.hangingFragments,"Unsupported geometry briefly hangs before collapsing. Off makes it fall immediately. Requires Local chain collapses.",[](const Settings &d){return d.breakableWalls&&d.chainCollapses;}),
+                choice("collapse_size","Largest detached fragment",&s.collapseSize,{"Small","Medium","Large"},{4,12,24},"Maximum connected field nodes in a removable fragment. Larger pieces cost more to check. Anchored structures remain intact.",[](const Settings &d){return d.breakableWalls&&d.chainCollapses;})}},
             {"Combat",{
+                check("material_rubble","Match rubble to surface",&s.materialRubble,"Crater interiors, chips and dust inherit the nearby wall or floor color. Off restores grey stone."),
                 check("gun_impacts","Gun impacts",&s.gunImpacts,"Uzi animated sparks, voxel dust and impact puff from Stewie-Brian Arsenal. Disable to restore original bullet puffs. Blood and shootable lights have separate options."),
                 check("blood","Blood splats and pools",&s.blood,
                     "Hitscan hits leave splats on floors and nearby walls; corpses grow a pool. Colors come from the WAD's blood sprite."),
+                check("blood_spray","Blood spray and trails",&s.bloodSpray,"Flying blood droplets, wound drips and smears. Cosmetic only."),
                 check("blood_shine","Wet blood shine",&s.bloodShine,"Fresh blood on the floor glints in a brighter palette red under dynamic lights, then dries matte.",
                     [](const Settings &d){return d.blood!=0;}),
                 check("wounds","Wound holes",&s.wounds,
@@ -169,7 +216,8 @@ std::vector<OptionTab> optionTabs(Settings &s) {
                 check("window_glass","Window glass",&s.windowGlass,
                     "Windows found in the map's geometry get a pane of glass: grimy at the edges, streaked with highlights that "
                     "slide as you move, reflecting the sky from outside. The first shot, projectile or blast through it shatters "
-                    "it into shards; shots and sight pass exactly as in vanilla."),
+                    "it into large, reflective shards that tumble and bounce; shots and sight pass exactly as in vanilla.",hasGlass),
+                check("progressive_glass","Progressive glass damage",&s.progressiveGlass,"Bullets chip and crack glass before it fractures. Off breaks it immediately."),
                 check("glass_reflections","Glass reflections",&s.glassReflections,
                     "Experimental: the window filling most of the view mirrors the room in front of it, monsters and shots "
                     "included, drawn a second time like the liquid reflections and at their resolution. Costs about as much as they do.",
@@ -180,6 +228,9 @@ std::vector<OptionTab> optionTabs(Settings &s) {
                 check("glossy_screens","Glossy monitor screens",&s.glossyScreens,
                     "Screens found in computer textures get curved CRT glass: the picture bends and shifts behind it as you move, "
                     "and it catches sharp highlights from lamps, shots and the flashlight."),
+                check("live_readouts","Live readouts",&s.liveReadouts,
+                    "The blocks of glowing cells painted into computer panels (the green grids beside DOOM's consoles) "
+                    "change now and then, cell by cell, each taking the light of another in its row."),
                 check("glowing_eyes","Glowing eyes",&s.glowingEyes,
                     "The eyes painted into monster artwork glow in the dark: the zombies' and imp's red, the demon's yellow, "
                     "the cacodemon's and mancubus's green, the arachnotron's blue. Picked by hand for stock monsters, searched for in other artwork; bloom needs emissive textures.")}}}},
@@ -189,11 +240,18 @@ std::vector<OptionTab> optionTabs(Settings &s) {
                 check("aggressive_ai","Aggressive AI",&s.aggressiveAI,"WARNING: Can make the game hard, and very hard with pistol starts. Adds sustained attacks, faster gunfire, repositioning and barrages. Single-player only."),
                 check("persistent_pursuit","Persistent pursuit",&s.persistentPursuit,"Alerted monsters search around walls and retry blocked routes. Off keeps original AI. Single-player only; does not wake unaware monsters.")}}}},
         {"Bundled mods",{
+            {voxelDetected()?"VoxelDoom detected":"VoxelDoom not loaded",{
+                check("voxel_models","Voxel models",&s.voxelModels,"Load VoxelDoom through the launcher to use Cheello's voxel models. Missing frames use sprites. Uses native animation and lighting; pack scripts are not executed.",[](const Settings &d){return d.accelerated&&voxelDetected();}),
+                check("voxel_eyes","Voxel glowing eyes",&s.voxelEyes,"Living voxel monsters use detected eye surfaces. Requires Glowing monster eyes and Voxel models.",[](const Settings &d){return d.accelerated&&voxelDetected()&&d.voxelModels&&d.glowingEyes;})}},
             {"Enable / disable",{
                 check("mod_fluid_weapons","FluidWeapons",&s.fluidWeapons,"Toggle weapon animations and Fluid firing behavior. Applies immediately."),
                 check("mod_fluid_sounds","FluidWeapons SFX add-on",&s.fluidSounds,"Toggle the enhanced weapon sounds independently. Applies immediately."),
                 check("mod_fluid_monsters","FluidMonsters",&s.fluidMonsters,"Toggle smooth monster walking. Applies immediately; demos keep original movement.")}}}},
         {"Fluid Weapons",{
+            {"Rocket launcher",{
+                choice("fluid_rocket_fire","Rocket fire effect",&s.fluidRocketFire,
+                    {"Soft glow","Grainy fire"},{0,1},
+                    "Choose the earlier soft glow or the grainy Fluid-style fire. Uses the selected fire style; original impact smoke is preserved. Rocket height, trajectory and weapon position stay the same.")}},
             {"Gloves",{
                 check("fluid_bare_hands","Bare fists",&s.fluidBareHands,"Show bare hands with fists; disable to use your glove color."),
                 check("fluid_fast_pistol","Fast pistol",&s.fluidFastPistol,"Fluid Weapons fast pistol: 3.5 shots/sec; off restores 2.5 shots/sec."),
@@ -251,14 +309,14 @@ std::vector<OptionTab> optionTabs(Settings &s) {
                     [](const Settings &d){return d.bakedLights!=0||d.sun!=0;}),
                 check("eye_adaptation","Eye adaptation",&s.eyeAdaptation,"Brief stepped over- or underexposure when you move between bright and dark areas.")}},
             {"Flashlight and shadows",{
-                slider("flashlight_tint","Flashlight tint",&s.flashlightTintGain,0,2,0.5,"Subtle target-color tint: left is off, middle is the default, right is stronger."),
+                slider("flashlight_tint","Flashlight tint",&s.flashlightTintGain,0,2,0.5,"Subtle target-color tint: left is off, middle is the default, right is stronger.",hasFlashlight),
                 check("classic_flashlight","Classic flashlight",&s.classicFlashlight,
                     "A shorter, warmer beam that works like Doom's own light levels: it brightens what it hits in "
-                    "hard steps to a little past full brightness and no further, so monsters keep their palette colors."),
+                    "hard steps to a little past full brightness and no further, so monsters keep their palette colors.",hasFlashlight),
                 check("stippled_shadows","Stippled shadow edges",&s.stippledShadows,
                     "The shadows walls, ledges and monsters throw in the flashlight stay hard but break into a coarse dither at the edge: "
-                    "a pixel where the wall meets its shadow, wider the farther the shadow falls behind it."),
-                check("flashlight_shadows","Flashlight silhouettes",&s.flashlightShadows,"Things caught in the flashlight throw their sprite outline onto the wall behind them."),
+                    "a pixel where the wall meets its shadow, wider the farther the shadow falls behind it.",hasFlashlight),
+                check("flashlight_shadows","Flashlight silhouettes",&s.flashlightShadows,"Things caught in the flashlight throw their sprite outline onto the wall behind them.",hasFlashlight),
                 check("player_shadow","Player shadow",&s.playerShadow,"Your own sprite's shadow from the sun or the strongest light above you.")}}}},
         {"Atmosphere",{
             {"Air",{
@@ -271,8 +329,26 @@ std::vector<OptionTab> optionTabs(Settings &s) {
                     [](const Settings &d){return d.sun!=0&&d.sunShafts!=0;}),
                 check("sun_disc","Sun in the sky",&s.sunDisc,"A faint sun disc and soft glow where the baked sunlight comes from, over the sky texture's brightest part."),
                 check("dust_motes","Dust motes",&s.dust,"Specks that glint in indoor sunbeams and the flashlight beam."),
-                check("embers","Torch embers",&s.embers,"Small rising sparks from flames, capped and distance limited."),
+                check("embers","Embers",&s.embers,"A few sparks rise from torches and fires and cool as they climb; where the game's wind blows, it carries them off."),
                 check("heat_haze","Heat haze",&s.heatHaze,"Rows of pixels shimmer above lava, hot damaging floors and flames.")}},
+            {"Authored episodes",{
+                check("authored_episodes","Authored episodes",&s.authored,
+                    "Looks picked by hand for the game's own episodes, beyond what DERP derives from the WAD: Knee-Deep in the Dead "
+                    "lies at night in a downpour, the sun hidden and the lit rooms shining out through their windows into the dark. "
+                    "Off: every map is lit as the WAD gives it, sun and all. Maps from custom WADs never get these looks.",hasAuthored)}},
+            {"Weather and wear",{
+                choice("weather","Rain",&s.weather,{"Never","Authored episodes","Always"},{0,1,2},
+                    "Rain falls under the sky in streaks of whole pixels and splashes where it lands; drops gather and run down "
+                    "the outside of window glass, the ground darkens as it soaks, and you hear it. Authored episodes: it rains where "
+                    "an authored episode's look has rain (DOOM's first episode). Always: on every map. Through a broken window the wind "
+                    "blows the rain in, and the floor and wall beneath it get wet."),
+                check("worn_plates","Worn plates",&s.wornPlates,
+                    "Plain metal plates show years of use: grime packed into their seams, dull blotches, boot scuffs low down, "
+                    "and a duller sheen. Only on plates that are otherwise blank, such as the fronts of DOOM's computer desks."),
+                check("window_streaks","Window streaks",&s.windowStreaks,
+                    "Rain has run down the outside walls below windows for years: dark ragged streaks from the sill, rusty on "
+                    "metal. Inside they start once rain blows in through a broken pane. Needs window glass.",hasGlass)}},
+
             {"Liquids",{
                 check("reflections","Reflections",&s.reflections,
                     "Mirror the scene in nearby water; renders the view a second time at half resolution."),
@@ -307,6 +383,13 @@ std::vector<OptionTab> optionTabs(Settings &s) {
                 check("damp_shores","Damp shores",&s.dampShores,
                     "Walls and banks just above water, nukage, slime and blood turn darker and damp up to a ragged line, "
                     "a little stained by the liquid. Lava stays dry."),
+                check("glow_edges","Glowing liquid edges",&s.glowEdges,
+                    "Walls running straight into nukage, slime or lava take the glowing strip the game paints on its own edge textures, "
+                    "like the NUKE24 steps, instead of only the walls a mapper gave that texture."),
+                check("shore_ripples","Shore ripples",&s.shoreRipples,
+                    "Liquids ripple where they meet walls, like the splash rings running along the shore: quick thin lines on water, "
+                    "slow broad ones on nukage and slime, slow glowing ones on lava, a still dark line on blood."),
+                check("liquid_projectile_impacts","Liquid projectile bursts",&s.liquidProjectileImpacts,"Projectiles hitting liquid throw colored spray and wall drips instead of a fireball. Rockets make large plumes; other projectiles make smaller splashes. Requires Splashes.",[](const Settings &d){return d.splashes!=0;}),
                 check("splashes","Splashes",&s.splashes,"Ripple rings where things land, wade or are shot in liquids, and spouts where shots and projectiles hit them. "
                     "Things standing in liquids sink in; nukage, slime, blood and lava splash thick and bubble.")}}}},
         {"Sound",{
@@ -347,6 +430,11 @@ std::vector<OptionTab> optionTabs(Settings &s) {
                     "under the sky, heard dull through window glass until it is shot, where the map shows them. Only near ones are heard; "
                     "steady lamps barely, flickering ones buzz with their light, and shot-out fixtures go quiet. "
                     "Loud effects push it down for a moment."),
+                check("hidden_machinery","Machinery behind walls",&s.hiddenMachinery,"Occasional muffled pipes, vents and machinery during quiet moments."),
+                check("adjacent_reverb","Echoes from adjoining halls",&s.adjacentReverb,"Hear larger halls through nearby openings. Requires room acoustics."),
+                check("alternative_computer_sounds","Alternative computer sounds",&s.alternativeComputerSounds,
+                    "Computers use a narrow machine hum, hard-drive seeks and relay chatter as an alternative to their original bleeps.",
+                    [](const Settings &d){return d.ambience!=0;}),
                 slider("ambience_amount","Ambience volume",&s.ambienceAmount,0.25,2,0.25,
                     "How loud the ambience is next to the effects.",
                     [](const Settings &d){return d.ambience!=0;},
@@ -363,9 +451,13 @@ std::vector<OptionTab> optionTabs(Settings &s) {
             {"Hearing",{
                 check("muffle_walls","Muffled behind walls",&s.muffleWalls,
                     "Sounds you can't see come through muffled, the more the longer their way round through the map's openings, "
-                    "more through closed doors and window glass, most through solid walls. Their loudness stays as in vanilla DOOM."),
+                    "more through closed doors and window glass, most through solid walls. Walls take their treble, not their loudness."),
                 check("muffle_distance","Duller with distance",&s.muffleDistance,
-                    "Far sounds lose their treble, the way they do through air.")}}}},
+                    "Far sounds lose their treble, the way they do through air."),
+                check("natural_falloff","Natural distance falloff",&s.naturalFalloff,
+                    "Far sounds fade the way they do in air, losing half their strength each time the distance doubles, "
+                    "so a monster across the room sounds across the room. Gunfire and blasts carry farther, faint and dull. "
+                    "Off: DOOM's straight fade, still loud at mid range.",hasFalloff)}}}},
         {"Performance",{
             {"Cheaper light work",{
                 check("bake_only_lights","Bake-only static lights",&s.bakeOnlyLights,
@@ -384,6 +476,28 @@ std::vector<OptionTab> optionTabs(Settings &s) {
                     "Only the 8 nearest lamp strips and glowing flats light their surroundings per pixel, not 24. Cheaper in rooms "
                     "full of light panels; farther ones keep their baked glow but lose their moving highlights.",
                     [](const Settings &d){return d.emissive!=0&&d.bakeOnlyLights==0;})}}}}};
+    for(auto &tab:tabs)for(auto &section:tab.sections)for(auto &option:section.options) {
+        std::string key=option.key;
+        if(key=="fluid_rocket_fire"||key=="fluid_bare_hands"||key=="fluid_fast_pistol"||key=="fluid_gloves")
+            option.enabled=[](const Settings &d){return d.fluidWeapons!=0;};
+        if(key.find("fluid_glove_")==0||key.find("fluid_shade_")==0)
+            option.enabled=[](const Settings &d){return d.fluidWeapons&&d.fluidGloves==7;};
+        if(key=="through_walls"||key=="breach_doors")
+            option.enabled=[](const Settings &d){return d.breakableWalls!=0;};
+        if(key=="progressive_glass"||key=="glass_reflections")
+            option.enabled=[](const Settings &d){return d.windowGlass&&hasGlass(d);};
+    }
+    // Keep combat controls separate from the large destruction section.
+    OptionTab combat{"Combat",{}};
+    for(auto &tab:tabs)if(std::string(tab.title)=="Effects") {
+        tab.title="Destruction";
+        for(auto it=tab.sections.begin();it!=tab.sections.end();) {
+            if(std::string(it->title)=="Combat") {combat.sections.push_back(std::move(*it));it=tab.sections.erase(it);}
+            else ++it;
+        }
+    }
+    if(!combat.sections.empty())tabs.insert(tabs.begin()+3,std::move(combat));
+    return tabs;
 }
 
 namespace {
@@ -391,13 +505,30 @@ template<class Visit> void eachOption(Settings &s,Visit visit) {
     for(OptionTab &tab:optionTabs(s))for(OptionSection &section:tab.sections)for(Option &option:section.options)visit(option);
 }
 }
+// graphics.cfg from before the combined Combat choices: the old switches' values, until finishReading
+// turns them into the choices a file without those keys still lacks.
+static double oldDeath[4]={1,1,0,0},oldHit[2]={1,1},oldBlood[3]={1,1,1};   // varied, falls, ragdoll, blast; motion, flinch; blood, spray, shine
+static bool readOld[3],readNew[3];
 void readOption(Settings &s,const char *key,double value) {
+    static const char *const olds[][4]={{"varied_deaths","death_falls","death_ragdoll","death_blast"},{"death_motion","hit_flinch"},{"blood","blood_spray","blood_shine"}};
+    double *into[]={oldDeath,oldHit,oldBlood};
+    static const char *const news[]={"deaths","hit_reactions","blood_level"};
+    for(int g=0;g<3;++g) {
+        for(int k=0;k<4&&olds[g][k];++k)if(!strcmp(key,olds[g][k])) {into[g][k]=value;readOld[g]=true;}
+        if(!strcmp(key,news[g]))readNew[g]=true;
+    }
     eachOption(s,[&](Option &option) {
         if(strcmp(option.key,key))return;
         if(option.kind==OptionKind::Check)*option.flag=value!=0;
         else if(option.kind==OptionKind::Choice) {for(int v:option.values)if(v==value)*option.flag=v;}
         else *option.number=option.snap(value);
     });
+}
+void finishReading(Settings &s) {
+    if(readOld[0]&&!readNew[0])s.deaths=!oldDeath[0]?0:oldDeath[2]?(oldDeath[3]?4:3):oldDeath[1]?2:1;
+    if(readOld[1]&&!readNew[1])s.hitReactions=oldHit[0]||oldHit[1];
+    if(readOld[2]&&!readNew[2])s.bloodLevel=!oldBlood[0]?0:oldBlood[1]||oldBlood[2]?2:1;
+    for(int g=0;g<3;++g)readOld[g]=readNew[g]=false;
 }
 void writeOptions(FILE *file,Settings &s) {
     eachOption(s,[&](Option &option) {

@@ -15,9 +15,15 @@ if [ ! -x "$source_app/Contents/MacOS/Play DOOM" ]; then
     echo "Build the SDL app first; see BUILDING.md." >&2
     exit 1
 fi
+# The Heretic program goes in Contents/MacOS: the launcher hands Heretic WADs over.
+if [ ! -x "$build_dir/derp-heretic" ]; then
+    echo "Build derp-heretic too; see BUILDING.md." >&2
+    exit 1
+fi
 mkdir -p "$output_dir"
 rm -rf "$output_app"
 ditto "$source_app" "$output_app"
+cp "$build_dir/derp-heretic" "$output_app/Contents/MacOS/derp-heretic"
 resources="$output_app/Contents/Resources"
 mkdir -p "$resources/Licenses"
 cp "$project_dir/LICENSE.TXT" "$resources/Licenses/GPL-3.txt"
@@ -43,5 +49,6 @@ if [ -f "$freedoom_dir/COPYING.txt" ]; then
         cp "$freedoom_dir/$item" "$resources/Licenses/Freedoom/$item"
     done
 fi
+codesign --force --sign - "$output_app/Contents/MacOS/derp-heretic"
 codesign --force --sign - "$output_app"
 echo "Ready: $output_app"

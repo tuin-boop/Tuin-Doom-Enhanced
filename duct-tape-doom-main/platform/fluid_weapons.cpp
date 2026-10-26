@@ -16,7 +16,7 @@ void Weapons::adoptSwitchPose(const std::vector<Layer>& layers){
 }
 float Weapons::random(float a,float b){randomState=randomState*1664525u+1013904223u;return a+(b-a)*(randomState>>8)/16777215.f;}
 bool Weapons::supported(int w)const{return w>=0&&w<=8;}
-void Weapons::reset(int w){displayedSwayX=0;alternatePunch=true;ssgCatchAge=-1;shotgunCatchAge=-1;shotgunReturnWait=0;shotgunCatchMotion.reset();bumpHand={};bumpMotion.reset();fistEnd=-1;shells.clear();movementPose={};idlePose={};movementMotion.reset();idleMotion.reset();swayX=swayY=swayVX=swayVY=returnSpeed=bounce=bounceSpeed=0;bobState=0;idleDelay=0;idleStep=-1;idleWait=0;weapon=w;age=-1;pose={};pose.pivotX=pose.pivotY=.5f;motion.reset();motion.set(pose,false);frame=w==7?'C':'A';muzzle=oldMuzzle=0;plasmaFrame=0;spin=oldSpin=30;spinSpeed=gunFrame=0;soundEvents.clear();sawHold=0;charging=false;hand={};handMotion.reset();auxAction=0;auxAge=gripAge=-1;auxHand={};auxHandMotion.reset();altHeld=reloadHeld=oldAlt=oldReload=bfgIdle=manualReload=false;}
+void Weapons::reset(int w){rocketFlash={};displayedSwayX=0;alternatePunch=true;ssgCatchAge=-1;shotgunCatchAge=-1;shotgunReturnWait=0;shotgunCatchMotion.reset();bumpHand={};bumpMotion.reset();fistEnd=-1;shells.clear();movementPose={};idlePose={};movementMotion.reset();idleMotion.reset();swayX=swayY=swayVX=swayVY=returnSpeed=bounce=bounceSpeed=0;bobState=0;idleDelay=0;idleStep=-1;idleWait=0;weapon=w;age=-1;pose={};pose.pivotX=pose.pivotY=.5f;motion.reset();motion.set(pose,false);frame=w==7?'C':'A';muzzle=oldMuzzle=0;plasmaFrame=0;spin=oldSpin=30;spinSpeed=gunFrame=0;soundEvents.clear();sawHold=0;charging=false;hand={};handMotion.reset();auxAction=0;auxAge=gripAge=-1;auxHand={};auxHandMotion.reset();altHeld=reloadHeld=oldAlt=oldReload=bfgIdle=manualReload=false;}
 void Weapons::attack(int w){if(w==6||w==7){auxAction=0;auxAge=-1;bfgIdle=false;pose={};}if(w==0){shot(w);return;}if(w==7){if(weapon!=w)reset(w);sawHold=10;if(age<0){age=0;chainsaw();motion.set(pose);}return;}if(w==6){if(weapon!=w)reset(w);age=0;charging=true;power=0;pose.pivotX=.5f;pose.pivotY=0;bfg();motion.set(pose);}}
 void Weapons::shot(int w,float strength){if(weapon!=w)reset(w);auxAction=0;auxAge=-1;manualReload=false;ssgCatchAge=-1;bfgIdle=false;if(w==6){charging=false;age=25;bfg();motion.set(pose);return;}age=0;power=std::clamp(strength,0.f,1.f);if(w!=3)pose={};frame='A';if(w==1){pose.pivotX=random(secondGrip?.35f:0,.5f);pose.pivotY=random(0,secondGrip?.3f:.4f);rotation=(pose.pivotX-.5f)*power;pistol();}else if(w==2){pose.pivotX=.5f;pose.pivotY=.5f;shotgun();}else if(w==3)chaingun();else if(w==4)rocket();else if(w==5){muzzle=-1.5f;plasma();}else if(w==8)superShotgun();else if(w==0)fist();else if(w==7){sawHold=10;chainsaw();}motion.set(pose);}
 void Weapons::tick(int w){if(weapon!=w)reset(w);motion.beforeTick();handMotion.beforeTick();auxHandMotion.beforeTick();bumpMotion.beforeTick();catchBulletMotion.beforeTick();tickShells();if(sawHold>0)--sawHold;oldMuzzle=muzzle;oldSpin=spin;if(age>=0){++age;if(w==1)pistol();else if(w==2)shotgun();else if(w==3)chaingun();else if(w==4)rocket();else if(w==5)plasma();else if(w==6)bfg();else if(w==8)superShotgun();else if(w==0)fist();else if(w==7)chainsaw();}else if(w==7)chainsaw();if(w==3){if(auxReady&&altHeld&&std::abs(spinSpeed)<10.f)--spinSpeed;if((age<0||age>4)&&!(auxReady&&altHeld))spinSpeed*=.85f;if(std::abs(spinSpeed)<.001f)spinSpeed=0;spin-=spinSpeed;gunFrame=std::abs(std::fmod(gunFrame+spinSpeed*.03f,4.f));frame='A'+int(gunFrame);}auxiliary();tickShotgunCatch();if(movementActive)tickMovement();motion.set(pose,!(w==5&&(age==4||age==7||age==17||age==22)));}
@@ -194,6 +194,8 @@ void Weapons::rocket(){
     else if(age<=10){float r=random(.6f,.7f);pose.x=recoveryX+(pose.x-recoveryX)*r;pose.y=recoveryY+(pose.y-recoveryY)*r;pose.scaleX=misalignment+(pose.scaleX-misalignment)*r;pose.scaleY=misalignment+(pose.scaleY-misalignment)*r;pose.rotation*=r;}
     else if(age<=14){float r=random(.6f,.7f);pose.x*=r;pose.y*=r;pose.scaleX=1+(pose.scaleX-1)*r;pose.scaleY=1+(pose.scaleY-1)*r;pose.rotation*=r;}
     else {pose={};}
+    // GunFlash2 copies only the flash position, then expands independently.
+    if(age==1){rocketFlash={};rocketFlash.x=pose.x;rocketFlash.y=pose.y;}
 }
 std::vector<Layer> Weapons::baseLayers(float f,bool bareHands)const{
     if(!supported(weapon))return {};
@@ -265,7 +267,7 @@ std::vector<Layer> Weapons::baseLayers(float f,bool bareHands)const{
     std::vector<Layer> result={{prefix+frame+"0",transform,false}};
     if(weapon==4&&age>=2&&age<10){
         // GunFlash2 is a separate negative overlay, behind the launcher.
-        auto explosion=transform;explosion.pivotX=explosion.pivotY=.5f;
+        auto explosion=rocketFlash;explosion.pivotX=explosion.pivotY=.5f;
         float scale=age<5?1+.1f*(age-2):age==5?1.f:1.015f+.025f*std::max(0,age-6);
         explosion.scaleX=explosion.scaleY=scale;
         result.insert(result.begin(),{std::string("MI1F")+(age==2?'C':age<5?'D':'E')+"0",explosion,true,.7f-.2f*std::max(0,age-6),true});

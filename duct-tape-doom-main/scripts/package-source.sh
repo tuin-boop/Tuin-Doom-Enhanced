@@ -8,7 +8,7 @@ set -eu
 
 project_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 build_dir=$1
-stage="$2/DuctTapeDOOM-source"
+stage="$2/DERP-source"
 
 for dependency in sdl3-src nukedopl3-src tinysoundfont-src; do
     if [ ! -d "$build_dir/_deps/$dependency" ]; then
@@ -19,7 +19,7 @@ done
 
 rm -rf "$stage"
 mkdir -p "$2"
-git -C "$project_dir" archive --format=tar --prefix=DuctTapeDOOM-source/ HEAD | tar -x -C "$2"
+git -C "$project_dir" archive --format=tar --prefix=DERP-source/ HEAD | tar -x -C "$2"
 mkdir -p "$stage/dependencies"
 cp -R "$build_dir/_deps/sdl3-src" "$stage/dependencies/SDL3"
 cp -R "$build_dir/_deps/nukedopl3-src" "$stage/dependencies/Nuked-OPL3"

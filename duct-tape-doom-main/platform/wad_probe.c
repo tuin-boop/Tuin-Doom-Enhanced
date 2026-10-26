@@ -24,12 +24,15 @@ int DOOM_ProbeWad(const char *path, doom_wad_info *info)
         (uint64_t)offset + (uint64_t)count * 16 > (uint64_t)length ||
         fseek(file, offset, SEEK_SET)) goto done;
     info->is_iwad = !memcmp(header, "IWAD", 4);
+    int has_tinttab = 0, has_behavior = 0;
     for (uint32_t i = 0; i < count; ++i)
     {
         if (fread(entry, 1, 16, file) != 16 ||
             (uint64_t)little32(entry) + little32(entry + 4) > (uint64_t)length) goto done;
         const unsigned char *name = entry + 8;
         if (!memcmp(name, "PLAYPAL\0", 8)) info->has_palette = 1;
+        if (!memcmp(name, "TINTTAB\0", 8)) has_tinttab = 1;
+        if (!memcmp(name, "BEHAVIOR", 8)) has_behavior = 1;
         if (name[0] == 'E' && name[1] >= '1' && name[1] <= '9' &&
             name[2] == 'M' && name[3] >= '1' && name[3] <= '9' && !name[4])
         {
@@ -39,6 +42,7 @@ int DOOM_ProbeWad(const char *path, doom_wad_info *info)
         if (!memcmp(name, "MAP", 3) && name[3] >= '0' && name[3] <= '9' &&
             name[4] >= '0' && name[4] <= '9' && !name[5]) info->numbered_maps = 1;
     }
+    info->game = has_behavior ? DOOM_WAD_HEXEN : has_tinttab ? DOOM_WAD_HERETIC : DOOM_WAD_DOOM;
     valid = 1;
 done:
     fclose(file);

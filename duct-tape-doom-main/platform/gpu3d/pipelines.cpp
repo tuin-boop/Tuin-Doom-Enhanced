@@ -6,7 +6,7 @@
 namespace gpu3d {
 SDL_GPUSampleCount sampleCount=SDL_GPU_SAMPLECOUNT_1;
 static SDL_GPUShader *worldVertexShader,*reflectVertexShader,*screenVertexShader,*skyVertexShader;
-SDL_GPUGraphicsPipeline *opaquePipeline,*skyPipeline,*skySurfacePipeline,*reflectSkySurfacePipeline,*worldPipeline,*shadowPipeline,*decalPipeline,*effectAddPipeline,*particlePipeline,*heatPipeline,
+SDL_GPUGraphicsPipeline *opaquePipeline,*skyPipeline,*skySurfacePipeline,*reflectSkySurfacePipeline,*worldPipeline,*shadowPipeline,*decalPipeline,*effectAddPipeline,*particlePipeline,*crestPipeline,*heatPipeline,
     *weaponPipeline,*weaponAddPipeline,*hudPipeline,*solidPipeline,*mistPipeline,*shaftPipeline,*overlayWeaponPipeline,*overlayWeaponAddPipeline,*overlayHudPipeline,*overlaySolidPipeline,
     *reflectOpaquePipeline,*reflectSkyPipeline,*reflectWorldPipeline,*emissionPipeline,*rubbleEmissionPipeline,*blurPipeline,*presentPipeline,*depthPipeline,*prepassPipeline,*coveragePipeline,*cutoutPipeline,
     *settingsPipeline,*glassPipeline,*reflectPrepassPipeline;
@@ -28,7 +28,7 @@ static SDL_GPUShader *shader(const ShaderCode &code,SDL_GPUShaderStage stage,Uin
 #define VERTEX_SHADER(name,uniforms) shader(SHADER_CODE(name),SDL_GPU_SHADERSTAGE_VERTEX,0,0,uniforms)
 #define FRAGMENT_SHADER(name,samplers,storage,uniforms) shader(SHADER_CODE(name),SDL_GPU_SHADERSTAGE_FRAGMENT,samplers,storage,uniforms)
 // heatBlend writes only alpha, keeping the lowest (hottest) value.
-enum Blend { opaqueBlend, alphaBlend, heatBlend, addBlend, mirrorBlend, depthBlend };
+enum Blend { opaqueBlend, alphaBlend, heatBlend, addBlend, mirrorBlend, depthBlend, brightenBlend };
 enum Depth { noDepth, depthWrite, depthTest, depthAlways, depthOnly };
 // Geometry pipelines read the 64-byte Vertex; screen and sky passes have no vertex input.
 static SDL_GPUGraphicsPipeline *pipeline(SDL_GPUShader *vertex,SDL_GPUShader *fragment,Blend blend,Depth depth,
@@ -71,6 +71,14 @@ static SDL_GPUGraphicsPipeline *pipeline(SDL_GPUShader *vertex,SDL_GPUShader *fr
         b.src_color_blendfactor=SDL_GPU_BLENDFACTOR_SRC_ALPHA;b.dst_color_blendfactor=SDL_GPU_BLENDFACTOR_ONE;
         b.src_alpha_blendfactor=SDL_GPU_BLENDFACTOR_ZERO;b.dst_alpha_blendfactor=SDL_GPU_BLENDFACTOR_ONE;
         b.color_blend_op=b.alpha_blend_op=SDL_GPU_BLENDOP_ADD;
+    } else if(blend==brightenBlend) {
+        // What is drawn already, times one plus the source color: liquid
+        // crests brighten the shaded surface under them by a step; the
+        // target's alpha is kept.
+        auto &b=target.blend_state;b.enable_blend=true;
+        b.src_color_blendfactor=SDL_GPU_BLENDFACTOR_DST_COLOR;b.dst_color_blendfactor=SDL_GPU_BLENDFACTOR_ONE;
+        b.src_alpha_blendfactor=SDL_GPU_BLENDFACTOR_ZERO;b.dst_alpha_blendfactor=SDL_GPU_BLENDFACTOR_ONE;
+        b.color_blend_op=b.alpha_blend_op=SDL_GPU_BLENDOP_ADD;
     } else if(blend==depthBlend) {
         // Depth prepass: the color target stays untouched.
         target.blend_state.enable_color_write_mask=true;target.blend_state.color_write_mask=0;
@@ -98,7 +106,7 @@ bool createPipelines() {
     SDL_GPUShader *sky=FRAGMENT_SHADER(sky_frag,2,0,3),*skySurface=FRAGMENT_SHADER(sky_surface_frag,2,0,3),*shadow=FRAGMENT_SHADER(shadow_frag,1,0,0),*decal=FRAGMENT_SHADER(decal_frag,1,0,0);
     SDL_GPUShader *particle=FRAGMENT_SHADER(particle_frag,0,0,0),*solid=FRAGMENT_SHADER(solid_frag,0,0,0),*hud=FRAGMENT_SHADER(hud_frag,1,0,0);
     SDL_GPUShader *heat=FRAGMENT_SHADER(heat_frag,0,0,0),*glass=FRAGMENT_SHADER(glass_frag,4,1,4);
-    SDL_GPUShader *emission=FRAGMENT_SHADER(emission_frag,3,0,1),*blur=FRAGMENT_SHADER(blur_frag,1,0,1);
+    SDL_GPUShader *emission=FRAGMENT_SHADER(emission_frag,5,1,2),*blur=FRAGMENT_SHADER(blur_frag,1,0,1);
     SDL_GPUShader *mist=FRAGMENT_SHADER(mist_frag,2,0,1),*present=FRAGMENT_SHADER(present_frag,4,0,2),*depth=FRAGMENT_SHADER(depth_frag,1,0,0);
     const auto color=SDL_GPU_TEXTUREFORMAT_B8G8R8A8_UNORM,glow=SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT;
     const auto one=SDL_GPU_SAMPLECOUNT_1,msaa=sampleCount;
@@ -114,6 +122,7 @@ bool createPipelines() {
     decalPipeline=pipeline(wv,decal,alphaBlend,depthTest,msaa,color);
     effectAddPipeline=pipeline(wv,decal,addBlend,depthTest,msaa,color);
     particlePipeline=pipeline(wv,particle,alphaBlend,depthTest,msaa,color);
+    crestPipeline=pipeline(wv,particle,brightenBlend,depthTest,msaa,color);
     heatPipeline=pipeline(wv,heat,heatBlend,depthTest,msaa,color);
     glassPipeline=pipeline(wv,glass,alphaBlend,depthTest,msaa,color);
     weaponPipeline=pipeline(wv,world,alphaBlend,depthAlways,msaa,color);
@@ -142,14 +151,14 @@ bool createPipelines() {
         if(s)SDL_ReleaseGPUShader(device,s);
     for(SDL_GPUShader **s:{&worldVertexShader,&reflectVertexShader,&screenVertexShader,&skyVertexShader})
         if(*s) {SDL_ReleaseGPUShader(device,*s);*s=nullptr;}
-    for(auto *p:{opaquePipeline,skyPipeline,skySurfacePipeline,reflectSkySurfacePipeline,worldPipeline,shadowPipeline,decalPipeline,effectAddPipeline,particlePipeline,heatPipeline,weaponPipeline,weaponAddPipeline,overlayWeaponAddPipeline,hudPipeline,
+    for(auto *p:{opaquePipeline,skyPipeline,skySurfacePipeline,reflectSkySurfacePipeline,worldPipeline,shadowPipeline,decalPipeline,effectAddPipeline,particlePipeline,crestPipeline,heatPipeline,weaponPipeline,weaponAddPipeline,overlayWeaponAddPipeline,hudPipeline,
                  solidPipeline,mistPipeline,shaftPipeline,overlayWeaponPipeline,overlayHudPipeline,overlaySolidPipeline,reflectOpaquePipeline,
                  reflectSkyPipeline,reflectWorldPipeline,emissionPipeline,rubbleEmissionPipeline,blurPipeline,presentPipeline,depthPipeline,prepassPipeline,coveragePipeline,cutoutPipeline,settingsPipeline,glassPipeline,reflectPrepassPipeline})
         if(!p)return false;
     return true;
 }
 void releasePipelines() {
-    for(SDL_GPUGraphicsPipeline **p:{&opaquePipeline,&skyPipeline,&skySurfacePipeline,&reflectSkySurfacePipeline,&worldPipeline,&shadowPipeline,&decalPipeline,&effectAddPipeline,&particlePipeline,&heatPipeline,
+    for(SDL_GPUGraphicsPipeline **p:{&opaquePipeline,&skyPipeline,&skySurfacePipeline,&reflectSkySurfacePipeline,&worldPipeline,&shadowPipeline,&decalPipeline,&effectAddPipeline,&particlePipeline,&crestPipeline,&heatPipeline,
             &weaponPipeline,&hudPipeline,&solidPipeline,&mistPipeline,&shaftPipeline,&overlayWeaponPipeline,&overlayHudPipeline,&overlaySolidPipeline,
             &reflectOpaquePipeline,&reflectSkyPipeline,&reflectWorldPipeline,&emissionPipeline,&rubbleEmissionPipeline,&blurPipeline,&presentPipeline,&depthPipeline,&prepassPipeline,&coveragePipeline,&cutoutPipeline,
             &settingsPipeline,&glassPipeline,&reflectPrepassPipeline})

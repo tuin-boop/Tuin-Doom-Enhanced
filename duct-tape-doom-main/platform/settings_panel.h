@@ -38,6 +38,11 @@ std::vector<OptionTab> optionTabs(Settings &s);
 // is known and the value valid (a choice's values, a slider's range);
 // writeOptions writes them all.
 void readOption(Settings &s,const char *key,double value);
+// After the last readOption: a file from before the combined Combat choices (Deaths, Hit reactions,
+// Blood) gets them from its old switches.
+void finishReading(Settings &s);
 void writeOptions(FILE *file,Settings &s);
+// Switches off the effects the game does without (Game_HasEffect).
+void fitGame(Settings &s);
 }
 #endif

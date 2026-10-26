@@ -204,15 +204,22 @@ inline float sunVisibility(const BakeMap &map,int sector,float x,float y,float z
 // height, as in flashAt) is a vertical span: rays to the middles of its
 // thirds count a third each, so a lip hiding part of the panel lets part of
 // its light by. (nx, ny): the panel's wall normal (doom_panel_emission), 0
-// for other lights. Returns the amount added (before color); direction, if
-// given, receives the unit vector toward the light when it reaches the point.
-struct BakeLight { float x,y,z,radius,strength,directionality; float color[3]; float extent=0,nx=0,ny=0; };
+// for other lights. beam (with a normal): it throws its light straight out,
+// falling off as the cosine to that power across, seen from above (window
+// light shining out into the night). Returns the amount added (before
+// color); direction, if given, receives the unit vector toward the light
+// when it reaches the point.
+struct BakeLight { float x,y,z,radius,strength,directionality; float color[3]; float extent=0,nx=0,ny=0,beam=0; };
 inline float addBakedLight(const BakeMap &map,const BakeLight &light,int sector,float x,float y,float z,const float normal[3],float out[3],float *direction=nullptr) {
     float d[3]={light.x-x,light.y-y,light.z-z};
     float distance=std::sqrt(d[0]*d[0]+d[1]*d[1]+d[2]*d[2]);
     if(distance>=light.radius)return 0;
     float falloff=1-distance/light.radius,amount=light.strength*falloff*falloff*(3-2*falloff);
     amount*=doom_panel_emission(-d[0],-d[1],-d[2],light.nx,light.ny,normal);
+    if(light.beam>0) {
+        float across=std::sqrt(d[0]*d[0]+d[1]*d[1]);
+        amount*=across>0.001f?std::pow(std::max(0.0f,-(d[0]*light.nx+d[1]*light.ny)/across),light.beam):1.0f;
+    }
     float facing=1;
     if(distance>0.001f) {
         for(float &c:d)c/=distance;
@@ -299,7 +306,9 @@ inline float addBakedArea(const BakeMap &map,const BakeArea &area,int sector,flo
             for(float &c:v)c/=std::max(length,0.001f);
             if(length>0.5f&&!traceRay(map,sector,x,y,z,v,length-0.5f,SkyCeiling::open))continue;
         } else d[0]=d[1]=0,d[2]=area.ceiling?-1.0f:1.0f;
-        // Limit pool illumination of vertical walls, retaining its own surface glow.
+        // A wall sees the pool over at most half its view, so it never takes
+        // more than half of what the pool's own surface does: at a rim it
+        // would otherwise glow brighter than the nukage lighting it.
         if(normal&&std::fabs(normal[2])<=0.5f)amount=std::min(amount,area.strength*0.5f);
         for(int c=0;c<3;++c)out[c]+=area.color[c]*amount*facing;
         if(direction)for(int c=0;c<3;++c)direction[c]=d[c];

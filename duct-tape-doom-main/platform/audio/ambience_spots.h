@@ -11,6 +11,7 @@ typedef struct {
     int cx, cy, cz, sector;  /* its cell; the sector of its largest source */
     int standing;            /* a standing lamp, which buzzes in a steady light too */
     int portal;              /* an opening to the sky the wind comes in by */
+    int line;                /* the map line a window's rain taps on, else -1 */
     /* How it reaches the listener, eased so nothing jumps: loudness 0-1 and
        lowpass, and where they head; the tic it was last in reach. */
     float muffle, cutoff, muffle_to, cutoff_to;

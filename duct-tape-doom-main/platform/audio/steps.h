@@ -5,7 +5,10 @@
 #ifndef DOOM_AUDIO_STEPS_H
 #define DOOM_AUDIO_STEPS_H
 
-typedef struct { int kind; float x, y, z, level; } step_event_t;
+typedef struct {
+    int kind; float x, y, z, level;
+    int personal;  /* listener's boot, splash or equipment; not a monster */
+} step_event_t;
 
 /* This tic's steps (IMPACT_ kinds of audio/impact_synth.h), at most max;
    returns how many. Call once a tic. */

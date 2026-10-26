@@ -73,6 +73,7 @@ extern int	key_speed;
 
 float		tourpitch;
 boolean		freeaim;
+boolean		classicaim;
 
 boolean P_DebugAllowed (void)
 {

@@ -23,9 +23,11 @@ typedef struct { int due; float x, y, z, level; } ambience_strike_t;
 
 /* The voices for this tic, for a listener at the console player; all
    silent outside a level. level scales them all (the F4 amount times the
-   effects volume). strike: a lamp coming back on in a flickering sector. */
+   effects volume). strike: a lamp coming back on in a flickering sector.
+   computer_body, when non-NULL, receives the combined computer field before
+   the alternative mix divides its budget between body and activity. */
 void Ambience_Update(ambience_voice_t voices[AMBIENT_KINDS][AMBIENCE_LAYERS], float level, int walls, int distance,
-                     ambience_strike_t *strike);
+                     ambience_strike_t *strike, ambience_voice_t *computer_body);
 /* Glowing fixtures shot out around (x, y, z): their hum, buzz or chatter
    stops for the rest of the level. */
 void Ambience_Silence(float x, float y, float z, float radius);
@@ -34,4 +36,8 @@ void Ambience_Silence(float x, float y, float z, float radius);
 void Ambience_Glaze(int line, int whole);
 /* Whether window glass is shown at all; without it the wind always blows. */
 void Ambience_ShowGlass(int shown);
+/* How hard it rains, 0-1: the rain is heard under the sky and through the
+   openings to it, as the wind is, whether or not the game has wind, and
+   tapping on the whole panes of windows looking out under it. */
+void Ambience_Rain(float amount);
 #endif

@@ -117,6 +117,71 @@ void P_ExplodeMissile (mobj_t* mo)
 }
 
 
+
+// Saved in existing missile-only counters: no save-format or actor-size change.
+void P_CheckMissileSpawn(mobj_t *th);
+#define ROMERO_STUCK (-32001)
+#define ROMERO_CHILD (-32002)
+int P_RomeroStick(mobj_t *mo,float nx,float ny,float nz) {
+    if(netgame||demoplayback||demorecording||mo->type!=MT_ROCKET||!(mo->flags&MF_MISSILE)
+       ||mo->threshold==ROMERO_CHILD||mo->threshold==ROMERO_STUCK||fabs(nz)>.65f
+       ||!mo->target||!mo->target->player||!(mo->target->player->cheats&CF_ROMERO))return 0;
+    // movedir is unused by missiles; store the outward normal as a fine angle.
+    mo->movedir=(int)(atan2(ny,nx)*FINEANGLES/(2*3.141592653589793));
+    mo->movedir&=FINEMASK;mo->threshold=ROMERO_STUCK;mo->reactiontime=TICRATE/2;
+    mo->momx=mo->momy=mo->momz=0;mo->flags|=MF_NOGRAVITY;
+    return 1;
+}
+void P_RomeroDrunk(mobj_t *source) {
+    double pitch=(freeaim&&source->player&&!netgame&&!demoplayback&&!demorecording)?fmax(-1.55,fmin(1.55,tourpitch)):0;
+    fixed_t horizontal=(fixed_t)(cos(pitch)*FRACUNIT),vertical=(fixed_t)(sin(pitch)*FRACUNIT);
+    for(int i=0;i<25;++i){
+        // Hold a straight launch for half a second before the random steering.
+        angle_t a=source->angle;
+        mobj_t *c=P_SpawnMobj(source->x,source->y,source->z+32*FRACUNIT,MT_ROCKET);
+        c->target=source;c->threshold=ROMERO_CHILD;c->reactiontime=TICRATE/2;c->movecount=1;c->angle=a;
+        c->momx=FixedMul(FixedMul(c->info->speed,horizontal),finecosine[a>>ANGLETOFINESHIFT]);
+        c->momy=FixedMul(FixedMul(c->info->speed,horizontal),finesine[a>>ANGLETOFINESHIFT]);
+        c->momz=FixedMul(c->info->speed,vertical);
+        P_CheckMissileSpawn(c);
+    }
+}
+static int P_RomeroTick(mobj_t *mo) {
+    if(mo->type==MT_ROCKET&&mo->threshold==ROMERO_CHILD&&mo->movecount==1&&(mo->flags&MF_MISSILE)){
+        if(--mo->reactiontime<=0){
+            mo->reactiontime=3;
+            mo->angle+=(angle_t)((int64_t)(P_Random()-128)*0x180000);
+            mo->momx=FixedMul(mo->info->speed,finecosine[mo->angle>>ANGLETOFINESHIFT]);
+            mo->momy=FixedMul(mo->info->speed,finesine[mo->angle>>ANGLETOFINESHIFT]);
+            mo->momz+=(P_Random()-128)*FRACUNIT/48;
+            if(mo->momz>10*FRACUNIT)mo->momz=10*FRACUNIT;
+            if(mo->momz< -10*FRACUNIT)mo->momz=-10*FRACUNIT;
+        }
+        return 0;
+    }
+    int i,normal;fixed_t x,y,z; mobj_t *owner;
+    if(mo->type!=MT_ROCKET||mo->threshold!=ROMERO_STUCK)return 0;
+    if(--mo->reactiontime>0)return 1;
+    normal=mo->movedir&FINEMASK;owner=mo->target;
+    x=mo->x+20*finecosine[normal];y=mo->y+20*finesine[normal];z=mo->z;
+    // Mark the parent before any impact callback can re-enter explosion logic.
+    mo->threshold=ROMERO_CHILD;mo->flags|=MF_MISSILE;
+    mo->momx=-20*finecosine[normal];mo->momy=-20*finesine[normal];
+    P_ExplodeMissile(mo);
+    for(i=0;i<25;++i) {
+        double az=(normal*2*3.141592653589793/FINEANGLES)+((i%5)-2)*.48;
+        double el=((i/5)-2)*.30;
+        mobj_t *child=P_SpawnMobj(x,y,z,MT_ROCKET);
+        child->target=owner;child->threshold=ROMERO_CHILD;
+        child->angle=(angle_t)(int64_t)(az*4294967296.0/(2*3.141592653589793));
+        child->momx=(fixed_t)(child->info->speed*cos(el)*cos(az));
+        child->momy=(fixed_t)(child->info->speed*cos(el)*sin(az));
+        child->momz=(fixed_t)(child->info->speed*sin(el));
+        P_CheckMissileSpawn(child);
+    }
+    return 1;
+}
+
 //
 // P_XYMovement  
 //
@@ -197,6 +262,8 @@ void P_XYMovement (mobj_t* mo)
 		    P_RemoveMobj (mo);
 		    return;
 		}
+        {extern int p_missile_hit_actor;
+         if(!p_missile_hit_actor&&P_RomeroStick(mo,-finecosine[mo->angle>>ANGLETOFINESHIFT]/(float)FRACUNIT,-finesine[mo->angle>>ANGLETOFINESHIFT]/(float)FRACUNIT,0))return;}
 		P_ExplodeMissile (mo);
 	    }
 	    else
@@ -439,7 +506,9 @@ P_NightmareRespawn (mobj_t* mobj)
 //
 void P_MobjThinker (mobj_t* mobj)
 {
+    if(P_RomeroTick(mobj))return;
     if(SV_Active()){SV_Refresh(mobj);SV_Missile(mobj);}else P_GlobalDigRefreshHeights(mobj);
+    if(mobj->type==MT_ROCKET&&mobj->threshold==ROMERO_STUCK)return;
     P_TacticsTick(mobj);
     P_FluidTick(mobj);
     // momentum movement
@@ -1023,3 +1092,4 @@ P_SpawnPlayerMissile
 
     P_CheckMissileSpawn (th);
 }
+

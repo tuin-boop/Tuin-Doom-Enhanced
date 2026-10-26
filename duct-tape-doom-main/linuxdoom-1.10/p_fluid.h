@@ -9,4 +9,5 @@ void P_FluidRemove(mobj_t *actor);
 void P_FluidTick(mobj_t *actor);
 int P_FluidChase(mobj_t *actor,actionf_p1 action);
 fixed_t P_FluidMoveSpeed(mobj_t *actor);
+fixed_t P_FluidFloatSpeed(mobj_t *actor);
 #endif

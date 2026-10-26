@@ -26,6 +26,9 @@
 #define FEATURE_UNEVEN_WALLS       262144u // painted wall and ceiling tiles and bricks too
 #define FEATURE_CLASSIC_FLASHLIGHT 524288u // the flashlight raises light like extralight, in steps
 #define FEATURE_STIPPLED_SHADOWS   1048576u // flashlight shadow edges break into an ordered-dither stipple
+#define FEATURE_GLOW_EDGES         2097152u // glowing liquids paint their edge strip on the walls they meet
+#define FEATURE_WINDOW_STREAKS     4194304u // rain streaks under windows (world/wear.glsl)
+#define FEATURE_LIVE_READOUTS      8388608u // LED readouts in computer textures change their cells
 
 #define FEATURE_GLOW_EDGES 2097152u
 #endif

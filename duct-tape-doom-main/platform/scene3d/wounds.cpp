@@ -15,6 +15,7 @@ struct Wound {
     bool flipped;
     uint32_t seed;
     std::unordered_map<const Image*,doom_wounds::Point> frames;
+    int tic=0;
 };
 static std::unordered_map<const mobj_t*,std::vector<Wound>> wounds;
 static std::unordered_map<int,float> standing;
@@ -146,7 +147,7 @@ void woundHit(mobj_t *target,fixed_t fx,fixed_t fy,fixed_t fz,fixed_t fdx,fixed_
     float height=image.top-point.v,across=flipped?image.width-image.left-point.u:point.u-image.left;
     uint32_t seed=hash32((uint32_t)std::lround(point.u*16)*73856093u^(uint32_t)std::lround(point.v*16)*19349663u^
                          (uint32_t)leveltime*83492791u^(uint32_t)target->type*2654435761u);
-    Wound wound={height,across,std::clamp(0.7f+damage/14.0f,0.8f,1.8f),viewYaw-sourceYaw,&image,point,flipped,seed,{}};
+    Wound wound={height,across,std::clamp(0.7f+damage/14.0f,0.8f,1.8f),viewYaw-sourceYaw,&image,point,flipped,seed,{},leveltime};
     auto &list=wounds[target];
     // Compare holes on this drawing, so hits on a moving limb still merge.
     auto distance=[&](Wound &w) {
@@ -170,12 +171,22 @@ void woundHit(mobj_t *target,fixed_t fx,fixed_t fy,fixed_t fz,fixed_t fdx,fixed_
     }
     if(list.size()>=maxWounds) {
         auto nearest=std::min_element(list.begin(),list.end(),[&](Wound &p,Wound &q) {return distance(p)<distance(q);});
-        nearest->radius=std::min(maxRadius,nearest->radius+0.3f);
+        nearest->radius=std::min(maxRadius,nearest->radius+0.3f);nearest->tic=leveltime;
         return;
     }
     list.push_back(wound);
 }
 void forgetWounds(const mobj_t *thing) {wounds.erase(thing);surfaces.erase(thing);}
+int woundSpots(const mobj_t *thing,WoundSpot *out,int most) {
+    auto found=wounds.find(thing);
+    if(found==wounds.end())return 0;
+    int count=0;
+    for(const Wound &w:found->second) {
+        if(count>=most)break;
+        out[count++]={w.height,w.across,w.yaw,w.radius,w.tic};
+    }
+    return count;
+}
 void woundsShutdown() {wounds.clear();surfaces.clear();lyings.clear();standing.clear();}
 
 // How tall a monster stands, by its first drawing, to tell lying death drawings.

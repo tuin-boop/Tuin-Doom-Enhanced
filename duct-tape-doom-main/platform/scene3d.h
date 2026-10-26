@@ -43,11 +43,14 @@ struct Point { float x,y; };
 // lampTint: the sector light's color from the lamps around a sprite (lampTint
 // in baked_lighting.h), unorm bytes; white for surfaces, which compute their own.
 struct Vertex { float x,y,z,u,v,light; unsigned mode; float red=0,green=0,blue=0; unsigned lightMask[2]={}; float sunU=-1,sunV=0; unsigned statics=0; unsigned lampTint=0xFFFFFFFFu; };
+// right.w: where the wear records start in the sector buffer (0: none);
+// forward.w, up.w: how wet the windows and the ground under the sky are.
+// mood: x how bright the sky is drawn (the episode's mood, Game_Mood).
 // fx: exposure, sky light tint; fx2: render-target pixels per Doom pixel,
 // sky light level (0: off); texFilter: sharp bilinear edge softness in texels, palette mipmaps (0: off);
 // flicker: the current light of the baked flicker groups, group 0 steady.
-struct Uniforms { float eye[4],right[4],forward[4],up[4],projection[4],effects[4],materials[4],flashlightTint[4],fog[4],map[4],water[4],sun[4],bake[4],fx[4],fx2[4],texFilter[4],flicker[4][4]; };
-static_assert(sizeof(Vertex)==64&&sizeof(Uniforms)==320,"Shader buffer layout");
+struct Uniforms { float eye[4],right[4],forward[4],up[4],projection[4],effects[4],materials[4],flashlightTint[4],fog[4],map[4],water[4],sun[4],bake[4],fx[4],fx2[4],texFilter[4],outdoor[4],haze[4],mood[4],weather[4],style[4],flicker[4][4]; };
+static_assert(sizeof(Vertex)==64&&sizeof(Uniforms)==400,"Shader buffer layout");
 using Flash=doom_flash_t;
 // 63 lights keep the FlashSet uniform block under 4 KB and fit the 64-bit light masks.
 constexpr unsigned maxLights=63;
@@ -56,13 +59,16 @@ using LightBlocker=doom_light_blocker_t;
 static_assert(sizeof(Flash)==64&&sizeof(FlashSet)==4048&&sizeof(LightBlocker)==32,"Flash shader layout");
 struct FogLights { unsigned count=0,indices[4]={},padding[3]={}; };
 static_assert(sizeof(FogLights)==32,"Fog shader layout");
+bool voxelDetected();
 struct Settings {
-    int hitFlinch=1,deathMotion=1,deathDirector=1,deathFalls=1,deathFaceViewer=0,wounds=1,embers=1,shoreRipples=0,glowEdges=1,nearMissSounds=1;
-    float bodyMotionStrength=1;
+    int nearMissSounds=1;
     int fullscreen=0;
     int hudStyle=0,hudFace=1,hudLayout=0;
     float hudScale=100;
     int accelerated=1, widescreen=1, crosshair=1, look=1, retro=0, fps=1, scale=100;
+    int invertLook=0; // Mouse look: moving the mouse forward tilts the view down.
+    int classicAim=0; // With mouse look: bullets autoaim at a monster in front as in DOOM, following the view only with none.
+    int quickConfirm=1; // Quicksave and quickload ask before overwriting or loading.
     float msaa=0; // Geometry edge anti-aliasing: 0 off, then 2x, 4x and 8x MSAA (capped by gpuMaxSamples).
     // Walls and floors: 0 crisp pixels, 1 smooth (bilinear), 2 sharp bilinear
     // (flat texels, edges blended over sharpSoftness texels plus a pixel).
@@ -72,6 +78,8 @@ struct Settings {
     float fov=90;
     float flashlightTintGain=1;
     int emissive=1, fog=1, palette=0;
+    int voxelModels=1,voxelEyes=1;
+    int ps2Style=0; // Optional chunky texture / stepped-lighting preset.
     int detail=1; // Derived normal maps and palette gloss.
     int variedHighlights=1; // Gloss highlights tighten on smooth artwork and spread on busy artwork, per palette ramp.
     int unevenTiles=1; // Tiles painted into floors each lie a little crooked, with a lit or shadowed lip where they meet.
@@ -90,8 +98,23 @@ struct Settings {
     float bounceTint=3; // With bounce: how strongly bounced lamp light colors the sector light around it (0-4).
     int caustics=1; // Rippling light from liquids on nearby walls.
     // Experimental effects, each separately switchable.
+    // F4's combined choices; fitGame sets the switches below them from these.
+    int deaths=0; // Deaths: 0 the game's frames, 1 varied, 2 procedural falls, 3 ragdolls, 4 ragdolls Hollywood (flying, punch, spins).
+    int hitReactions=1; // Hit reactions: death reactions and hit flinches.
+    int bloodLevel=2; // Blood: 0 off, 1 splats and pools, 2 full (spray, shine).
     int blood=1; // Splats on floors and walls from hitscan hits; pools under corpses.
+    int bloodSpray=1; // With blood: hits and kills throw drops that land as splats; wounds drip, sliding bodies smear, bodies thrown into walls splash them.
     int bloodShine=1; // Fresh blood glints under dynamic lights, then dries matte.
+    int deathMotion=0; // Optional deaths jolt with the killing blow's push and height.
+    int wounds=1; // Hitscan hits shoot holes through monsters' sprites, rimmed with blood; drawing only.
+    int deathFalls=0; // Optional procedural falls: 0 off, 1 by hit, 2 legs, 3 chest, 4 head.
+    int deathRagdoll=0; // Rigged monsters fall as ragdolls instead: the pain drawing raised into a relief on a small skeleton the hit knocks over.
+    int deathGuided=1; // With deathRagdoll: chest blasts from the front sometimes play the shot death on strings (hand rigs that fit it: the zombieman).
+    int deathBlast=0; // With deathRagdoll: explosions (rockets, barrels, the BFG) send bodies flying, glancing off walls until they land.
+    int deathFaceViewer=0; // With deathDirector: a monster killed facing away turns toward the eye before its death frames.
+    int deathDirector=0; // Optional varied staggers and turns from the monster's own frames.
+    int hitFlinch=1; // Living monsters flinch from hits, leaning with the push.
+    float bodyMotionStrength=1; // How far death reactions and flinches throw the body (0.5-3).
     int flashlightShadows=1; // Things in the flashlight beam cast their silhouette on the wall behind.
     int classicFlashlight=1; // A shorter, warmer beam that raises light in steps to a little past full brightness, never further.
     int stippledShadows=1; // The flashlight's shadow edges, from walls and things, break into an ordered-dither stipple instead of a clean line.
@@ -99,7 +122,16 @@ struct Settings {
     int heatHaze=0; // Stepped raster shimmer above lava, hot floors and flames.
     int eyeAdaptation=1; // Brief stepped over/underexposure when the light changes.
     int splashes=1; // Ripple rings where things land or walk in liquids, spouts where shots hit them; bubbles and sinking in thick ones.
+    int environmentEffects=1,pressureWaves=1,settlingDust=1,debrisLiquids=1,liquidRunoff=0,electricalDamage=1,rocketChunks=1;
+    int hangingFragments=1,chainCollapses=1,collapseSize=12,effectBudget=128;
+    int outdoorWind=1;
+    float outdoorWindDensity=1;
     int dust=1; // Specks glinting in sunbeams and the flashlight beam.
+    int embers=1; // A few sparks rising from flames, blown along by the game's wind.
+    int authored=1; // Authored episodes (Game_Mood): hand-picked looks for the game's own maps (DOOM's E1 night in the rain); off: the derived look everywhere.
+    int weather=1; // Rain under the sky: 0 never, 1 where an authored episode has it, 2 always.
+    int wornPlates=1; // Plain metal plates (Game_WornPlate) show years of use: grime in the seams, dull blotches, scuffs near the floor.
+    int windowStreaks=1; // Dark rain runs down the outside walls below windows, rusty on metal; inside too once rain blows through a broken one.
     int playerShadow=1; // The player's own sprite shadow from the sun or a strong light.
     int doorLight=1; // Light from a bright room spills through a door as it opens.
     int movingRelight=1; // Baked lamp light and sun re-bake around doors, lifts and lowering walls as they move.
@@ -116,17 +148,20 @@ struct Settings {
     int causticsSprites=1; // Monsters and things near liquids catch the caustics too.
     int causticsShots=0; // Muzzle flashes and projectiles over liquids throw caustics, not just the flashlight.
     int dampShores=1; // Walls and banks just above liquids turn darker and damp up to a ragged line.
+    int glowEdges=1; // Walls meeting nukage, slime or lava take the strip the game paints on its edge textures.
+    int shoreRipples=1; // Liquids ripple a little where they meet walls, each in its own way.
     int sunDisc=1; // A faint sun in the sky where the baked sunlight comes from.
     int sunShafts=1; // Soft sunbeams slanting down through ceiling holes and windows, with the dust motes in them.
     int sunScatter=1; // Sunbeams glow brighter seen toward the sun and fainter from behind it.
     int glossyScreens=1; // Monitor glass found in computer textures bulges, refracts the screen behind it and catches light.
+    int liveReadouts=1; // The LED readouts painted into computer textures change their cells now and then (doom_screen_readouts).
     int glowingEyes=1; // The eyes painted into monster artwork glow in the dark, with bloom (sprite_eyes.h).
     int windowGlass=1; // Windows found in the map get glass that reflects and shatters when shot through.
     int gunImpacts=1;
     int breakableWalls=1;
     int throughWalls=0;
     int breachDoors=0;
-    int wallDamage=100;
+    int wallDamage=250;
     int deeperDig=0;
     int monsterSurfaceDamage=1;
     int playerSurfaceDamage=1;
@@ -138,6 +173,10 @@ struct Settings {
     int fluidGloves=0; int fluidBareHands=1; int fluidFastPistol=1;
     int combatNotices=1;
     int fluidWeapons=1,fluidSounds=1,fluidMonsters=1;
+    int fluidRocketFire=1;
+    int materialRubble=1;
+    int liquidProjectileImpacts=1;
+    int progressiveGlass=1,hiddenMachinery=1,adjacentReverb=1;
     int persistentPursuit=0,aggressiveAI=0,advancedTactics=0;
     float fluidGloveRed=239,fluidGloveGreen=239,fluidGloveBlue=239;
     float fluidShadeRed=2,fluidShadeGreen=2,fluidShadeBlue=2;
@@ -149,9 +188,11 @@ struct Settings {
     float reverbAmount=1; // How loud the echoes and tail are (0-2).
     int muffleWalls=1; // Sounds out of sight are muffled, more behind closed doors.
     int muffleDistance=1; // Far sounds lose their treble.
+    int naturalFalloff=1; // Far sounds fade as in air (half as strong per doubled distance), not in DOOM's straight line.
     int madeImpacts=1; // Made-up sounds for sparks, lamps and screens dying, and glass breaking (audio/made_bank.h).
     int glassSound=0; // Which breaking glass: 0 the shatter, 1 the fracture (a branching crack front).
     int ambience=1; // Lamps, machines, liquids, fire and wind sound where the map's textures show them.
+    int alternativeComputerSounds=0; // Machine hum, hard-drive seeks and relay chatter in place of the computer bleeps.
     float ambienceAmount=1; // How loud the ambience is next to the effects (0-2).
     int footsteps=1; // The player's footsteps by floor, splashes in liquids, monsters splashing as they wade.
     // Performance: cheaper stand-ins for per-frame light work.
@@ -163,7 +204,7 @@ struct Settings {
 // glassFrame: on textures with monitor screens, where each glass pixel sits
 // on its screen (see screen_glass.h); null otherwise. relief: on walls and
 // flats, the bump slope and grain the shader shades them with (withRelief).
-struct Image { bool opaque=true; std::vector<byte> pixels; GpuTextureRef texture,glassFrame,relief; int width=0,height=0,left=0,top=0; std::array<float,3> glow={1,1,1}; float glowWeight=0; std::array<float,3> emissionColor={}; float emissionWeight=0,emissionCoverage=0,emissionU=0,emissionV=0; std::vector<byte> emission,screens; std::array<float,3> average={},brightest={}; bool averaged=false,brightened=false,liquidEmitter=false,switchIndicator=false; };
+struct Image { bool opaque=true; std::vector<byte> pixels; GpuTextureRef texture,glassFrame,relief; int width=0,height=0,left=0,top=0; std::array<float,3> glow={1,1,1}; float glowWeight=0,glowHeight=0.85f; std::array<float,3> emissionColor={}; float emissionWeight=0,emissionCoverage=0,emissionU=0,emissionV=0; std::vector<byte> emission,screens; std::array<float,3> average={},brightest={}; bool averaged=false,brightened=false; bool leaded=false,liquidEmitter=false,switchIndicator=false; };
 
 // Frame profiling for the performance smoke test (I_Render3DProfile).
 struct Profile { bool enabled=false; unsigned skip=0; const char *screenshotPath=nullptr; I_Render3DFrameProfile frame={}; };
@@ -193,6 +234,9 @@ extern std::map<int,std::vector<Vertex>> mirrorBatches;
 extern std::vector<Vertex> mistVertices,particleVertices,heatVertices;
 // HDR-only rubble emission, depth tested before the bloom blur.
 extern std::vector<Vertex> rubbleEmissionVertices;
+// Liquid crests (splash rings, shore ripples): brighten what is under them by
+// one plus their color (crestPipeline).
+extern std::vector<Vertex> crestVertices;
 // Sunbeam ribbons, drawn additively in the mist pass.
 extern std::vector<Vertex> shaftVertices;
 // Sky ceilings and sky walls, drawn into depth with the sky shader.
@@ -231,7 +275,11 @@ struct FrameView {
     Uniforms camera;
     float uiX,uiY,uiWidth,uiHeight,worldX,worldY,worldW,worldH;
 };
-struct SurfaceBinding { const Image *image,*next; float blend; std::array<float,4> liquidFrame={},liquidCycle={}; };
+// frameMean and cycleMean (liquid flats only): the shown frames' average color
+// at the crossfade, and the whole animation's; cycleMean's alpha is how much
+// of the artwork's contrast stays far away (0: not a liquid, no fade);
+// frameMean's alpha is the material (surfaceMaterial in scene3d/scene.cpp).
+struct SurfaceBinding { const Image *image,*next; float blend; std::array<float,4> frameMean{},cycleMean{}; };
 struct SpriteDraw { const Image *image; std::vector<Vertex> vertices; bool additive=false; };
 
 // Lifecycle: init reads options and graphics.cfg, the backend may override
@@ -253,7 +301,9 @@ using LoadingShow=void(*)(const char *title,const char *stage,float fraction);
 bool loadPending();
 void runLoading(int width,int height,LoadingShow show);
 std::vector<unsigned> hudPixels(const unsigned *pixels);
-extern GpuTextureRef toastyTexture;
+extern GpuTextureRef toastyTexture,romeroTexture;
+extern float romeroAge,romeroAspect;
+extern int romeroCorner;
 extern float toastyVisible,toastyAspect;
 std::vector<std::array<float,4>> sectorInfo();
 SurfaceBinding surfaceBinding(int key);
@@ -267,5 +317,6 @@ void saveScreenshot(const void *bgra,int width,int height,int stride);
 void updateTitle(int width,int height,const char *renderer);
 } // namespace doom3d
 #endif
+
 
 

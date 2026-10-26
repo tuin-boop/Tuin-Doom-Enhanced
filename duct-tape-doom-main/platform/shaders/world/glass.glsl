@@ -35,6 +35,28 @@ float glassCracks(vec2 uv,vec2 origin,vec2 extent,uint seed,out uint shard) {
     if(abs(r-ring)<0.5&&(tileHash(ivec2(int(shard),0),h)&1u)!=0u) crack=1.0;
     return crack;
 }
+// FEATURE_LIVE_READOUTS: blocks of LED cells outside the screens
+// (doom_screen_readouts; the frame holds where a texel sits on its block,
+// zero elsewhere). Now and then a cell takes the light of another cell in
+// its row, so the block keeps the artwork's own colors in new places; about
+// half the time a cell shows its own. Each cell keeps its own pace, 0.5 to
+// 2 seconds a change, set per block, texture repeat and wall section.
+// Returns the texture coordinate to read in place of uv.
+vec2 readoutCell(vec2 uv,uint section) {
+    ivec2 p=ivec2(floor(uv));
+    vec4 f=texelFetch(glassFrame,wrapTexel(p,textureSize(glassFrame,0)),0)*255.0;
+    if(f.b<0.5) return uv;
+    ivec2 bytes=ivec2(round(f.ba)),local=ivec2(round(f.rg));
+    ivec2 cell=ivec2(1)+ivec2(notEqual(bytes&128,ivec2(0))),extent=bytes&127;
+    ivec2 origin=p-local,at=local/cell;
+    int cells=max((extent.x+cell.x-1)/cell.x,1);
+    uint seed=tileHash(origin,section^0x5bd1e995u),own=tileHash(at,seed);
+    float slot=floor(c.fog.w/(0.5+1.5*float(own&255u)/255.0)+float((own>>8)&255u)/255.0);
+    uint pick=tileHash(at,seed^uint(int(slot))*0x9e3779b9u);
+    if((pick&1u)==0u) return uv;
+    int x=min(int((pick>>1)%uint(cells))*cell.x+local.x%cell.x,extent.x-1);
+    return vec2(origin+ivec2(x,local.y))+fract(uv);
+}
 // The CRT dome, peaking at a quarter of the shorter side: its smooth normal.
 vec3 glassDome(vec2 screen,vec2 extent,vec3 normal,vec3 tangent,vec3 bitangent) {
     float peak=min(extent.x,extent.y)*0.25;

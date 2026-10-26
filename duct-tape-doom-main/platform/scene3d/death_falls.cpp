@@ -380,7 +380,10 @@ bool startFall(const mobj_t &thing,float speed,float high,float side,float hitZ,
     const FallRig *painRig=legs?rigFor(fall.pain):nullptr;
     bool headshot=painRig&&painRig->hasHead&&hitZ>=painRig->head.neck&&
         std::abs(hitU-painRig->head.middle)<=painRig->head.width/2+1;
-    int choice=settings.deathFalls;
+    // -deathfalls 2|3|4 forces legs swept, chest blast or head shot for every fall, for judging each
+    // (once F4 choices; F4's Deaths only turns the falls on by the hit).
+    int choice=settings.deathFalls,forced=M_CheckParm((char*)"-deathfalls");
+    if(forced&&forced+1<myargc)choice=atoi(myargv[forced+1]);
     if(choice==2)fall.kind=FALL_LEGS;
     else if(choice==3)fall.kind=FALL_CHEST;
     else if(choice==4)fall.kind=FALL_HEAD;
@@ -441,10 +444,20 @@ bool startFall(const mobj_t &thing,float speed,float high,float side,float hitZ,
 }
 void forgetFall(const mobj_t *thing) {falls.erase(thing);}
 void fallsShutdown() {falls.clear();}
+bool rigJoints(int lump,RigJoints &out) {
+    const FallRig *rig=rigFor(lump);
+    if(!rig)return false;
+    const doom_stock_rig &d=*rig->data;
+    memcpy(out.hip,d.hip,sizeof out.hip);memcpy(out.knee,d.knee,sizeof out.knee);memcpy(out.ankle,d.ankle,sizeof out.ankle);
+    out.split=d.split;out.hasHead=rig->hasHead;out.guided=d.guided;
+    out.neck=rig->head.neck;out.headMiddle=rig->head.middle;out.headWidth=rig->head.width;
+    out.carried=&rig->carried;out.width=rig->width;out.height=rig->height;out.left=rig->left;out.top=rig->top;
+    return true;
+}
 // At level load: rig every killable monster's pain and first death drawing,
 // so no death waits on finding joints.
 void prepareFalls() {
-    if(!settings.deathFalls)return;
+    if(!settings.deathFalls&&!settings.deathRagdoll)return;
     for(int type=0;type<NUMMOBJTYPES;++type) {
         const mobjinfo_t &info=mobjinfo[type];
         if(!(info.flags&MF_COUNTKILL))continue;

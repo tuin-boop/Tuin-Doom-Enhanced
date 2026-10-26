@@ -15,5 +15,18 @@ for name in names:
     assert min(alpha) == 0 and max(alpha) > 0, name
     parts.append(f'static const unsigned char fluid_{name}[]={{'+','.join(map(str,alpha))+'};\n')
     parts.append(f'static const FluidMask mask_{name}={{{im.width},{im.height},fluid_{name}}};\n')
+# Rocket reference uses the engine's square particle style, not NSHSB0's blob.
+# A transparent one-texel border keeps clamp sampling clean at quad edges.
+size = 64
+alpha = [255 if 0 < x < size-1 and 0 < y < size-1 else 0
+         for y in range(size) for x in range(size)]
+parts.append('static const unsigned char fluid_rocketSquare[]={'+','.join(map(str,alpha))+'};\n')
+parts.append('static const FluidMask mask_rocketSquare={64,64,fluid_rocketSquare};\n')
+names.append('rocketSquare')
+im = Image.open(root/'assets/fluid-effects/glpart.png').convert('RGBA')
+alpha = [p[3] for p in im.getdata()]
+parts.append('static const unsigned char fluid_glpart[]={'+','.join(map(str,alpha))+'};\n')
+parts.append(f'static const FluidMask mask_glpart={{{im.width},{im.height},fluid_glpart}};\n')
+names.append('glpart')
 parts.append('static const FluidMask fluidMasks[]={'+','.join('mask_'+n for n in names)+'};\n')
 (root/'platform/scene3d/fluid_effect_assets.inc').write_text(''.join(parts))

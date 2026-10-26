@@ -1,14 +1,34 @@
 #ifndef DOOM_TOASTY_H
 #define DOOM_TOASTY_H
 #include "../../assets/toasty/portrait.h"
+#include "../../assets/toasty/romero.h"
 extern "C" {
-extern unsigned p_toasty_serial;
+extern unsigned p_toasty_serial,p_romero_serial;
 extern int p_toasty_tic,p_toasty_preview,snd_SfxVolume;
 int I_StartNamedSound(const char*,int,int,int,int);
 void I_StopSound(int);
 }
 namespace doom3d {
-GpuTextureRef toastyTexture;
+GpuTextureRef toastyTexture,romeroTexture;
+float romeroAge=-1,romeroAspect=1;
+int romeroCorner=1;
+static void romeroNotice() {
+ static unsigned seen=0,level=~0u;static int start=-1000,handle=0;
+ romeroAge=-1;
+ if(level!=r_levelserial||!worldPending||gamestate!=GS_LEVEL){level=r_levelserial;seen=p_romero_serial;start=-1000;return;}
+ if(seen!=p_romero_serial){seen=p_romero_serial;start=leveltime;
+  romeroCorner=(SDL_GetTicksNS()&1)?1:-1;
+  if(handle)I_StopSound(handle);
+  handle=I_StartNamedSound("DuctTape/Toasty",snd_SfxVolume,128,128,100);
+  if(!romeroTexture){SDL_Surface *png=SDL_LoadPNG_IO(SDL_IOFromConstMem(romero_png,sizeof(romero_png)),true);
+   SDL_Surface *rgba=png?SDL_ConvertSurface(png,SDL_PIXELFORMAT_RGBA32):nullptr;SDL_DestroySurface(png);
+   if(rgba){romeroTexture=gpuCreateTexture(GpuFormat::RGBA8,rgba->w,rgba->h,rgba->pixels,rgba->pitch);romeroAspect=float(rgba->w)/rgba->h;SDL_DestroySurface(rgba);}
+  }
+ }
+ float age=(leveltime-start+renderFraction)/35.f;
+ if(age>=0&&age<1.25f)romeroAge=age;
+}
+
 float toastyVisible=0,toastyAspect=1;
 static void toastyNotice() {
     toastyVisible=0;

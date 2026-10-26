@@ -128,3 +128,5 @@ static bool addExcavatedWall(const line_t &line,int side,int span,Point a,Point 
     for(auto &part:c.vertices){auto &out=batches[part.first];for(Vertex v:part.second){v.light*=light;out.push_back(v);}}
     return true;
 }
+
+

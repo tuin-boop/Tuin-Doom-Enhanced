@@ -74,7 +74,9 @@ vec2 outdoorShape(uint sector) {
 float sunLight(uint sector,float light,float visible,out float share) {
     float lift=round(max(0.0,c.sun.w-light)*visible*16.0)/16.0;
     if(sectorInfo[sector].w>0.0) {
-        float shaded=light-round(light*0.3*(1.0-visible)*16.0)/16.0;
+        // Outdoors shade drops c.outdoor.x of the light and sun adds c.outdoor.y
+        // (Game_Sun; walls by how squarely they face it, in the bake).
+        float shaded=light-round(light*c.outdoor.x*(1.0-visible)*16.0)/16.0+round(light*c.outdoor.y*visible*16.0)/16.0;
         float result=round(mix(shaded,light+lift,outdoorShape(sector).x)*16.0)/16.0;
         share=max(0.0,result-light)/max(result,0.001);
         return result;
@@ -133,7 +135,7 @@ SectorLit sectorLighting(vec3 normal,bool mapped,uint sector,uint bakeFlags) {
             float enclosed=outdoorShape(sector).x;
             float shaded=light-round(light*0.25*(1.0-ambient.x)*16.0)/16.0;
             light=round(mix(shaded,light+lift,enclosed)*16.0)/16.0;
-            skyShare=mix(0.3*ambient.x,indoorShare,enclosed);
+            skyShare=mix(c.outdoor.z*ambient.x,indoorShare,enclosed);
         } else if((bakeFlags&FEATURE_WINDOW_LIGHT)==0u) {skyShare=indoorShare;light+=lift;}
     }
     light=max(light,outdoorFloor);

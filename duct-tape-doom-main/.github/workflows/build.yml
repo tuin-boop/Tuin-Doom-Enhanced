@@ -21,7 +21,7 @@ jobs:
       - name: Configure
         run: cmake -S . -B build/ci -DCMAKE_BUILD_TYPE=${{ matrix.configuration }} -DBUILD_TESTING=ON
       - name: Build
-        run: cmake --build build/ci --config ${{ matrix.configuration }} --parallel
+        run: cmake --build build/ci --config ${{ matrix.configuration }} --parallel 4
       - name: Test
         run: ctest --test-dir build/ci -C ${{ matrix.configuration }} --output-on-failure
 
@@ -32,7 +32,7 @@ jobs:
       - name: Configure
         run: cmake -S . -B build/ci -DCMAKE_BUILD_TYPE=Debug -DDOOM_ENABLE_SANITIZERS=ON
       - name: Build
-        run: cmake --build build/ci --parallel
+        run: cmake --build build/ci --parallel 4
       - name: Test
         env:
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
@@ -50,7 +50,7 @@ jobs:
       - name: Configure SDL and the 3D renderer
         run: cmake -S . -B build/native -DCMAKE_BUILD_TYPE=Release -DDOOM_BUILD_SDL=ON
       - name: Build playable app
-        run: cmake --build build/native --parallel
+        run: cmake --build build/native --parallel 4
       - name: Test without game data or a game window
         run: ctest --test-dir build/native --output-on-failure
 
@@ -72,7 +72,7 @@ jobs:
       - name: Configure SDL and the SDL_gpu renderer
         run: cmake -S . -B build/native -DCMAKE_BUILD_TYPE=Release -DDOOM_BUILD_SDL=ON
       - name: Build playable app
-        run: cmake --build build/native --config Release --parallel
+        run: cmake --build build/native --config Release --parallel 4
       - name: Test without game data or a game window
         run: ctest --test-dir build/native -C Release --output-on-failure
 
@@ -85,6 +85,6 @@ jobs:
       - name: Configure
         run: cmake -S . -B build/ci -DCMAKE_BUILD_TYPE=Debug -DDOOM_BUILD_X11=ON
       - name: Build
-        run: cmake --build build/ci --parallel
+        run: cmake --build build/ci --parallel 4
       - name: Test portable target
         run: ctest --test-dir build/ci --output-on-failure

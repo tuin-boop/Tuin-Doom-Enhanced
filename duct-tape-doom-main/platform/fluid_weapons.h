@@ -22,6 +22,7 @@ class Weapons {
     uint32_t randomState=0x73ad46b1;
     float power=.5f,rotation=0,misalignment=0,recoveryX=0,recoveryY=0,pump=0;
     doomweapon::Transform pose;
+    doomweapon::Transform rocketFlash;
     doomweapon::Motion motion;
     char frame='A';
     float muzzle=0,oldMuzzle=0;

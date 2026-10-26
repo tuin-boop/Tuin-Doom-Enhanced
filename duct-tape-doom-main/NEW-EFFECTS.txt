@@ -31,3 +31,4 @@ Selected effects now show approximate performance notes. Costs depend on
 hardware and map complexity; baked-light options distinguish loading cost
 from per-frame cost. The same short run with only shore ripples disabled
 averaged 234.5 FPS (p99 10.35 ms).
+

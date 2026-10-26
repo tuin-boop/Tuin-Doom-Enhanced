@@ -2,7 +2,7 @@
 // drawing interpolates it without consuming the gameplay random stream.
 struct ImpactParticle {
     float x,y,z,ox,oy,oz,vx,vy,vz,age,life,size,spin;
-    int sector,kind; // 0 streak, 1 fragment, 2 dust, 3 flame
+    int sector,kind; // 0 streak, 1 fragment, 2 dust, 3 flame, 4 rocket voxel chunk
     std::array<float,3> color;
 };
 static std::vector<ImpactParticle> impactParticles;
@@ -33,6 +33,19 @@ static void impactParticle(float x,float y,float z,float vx,float vy,float vz,fl
 // Cross open portals, but reflect at solid wall sections. Scan only the
 // current sector's boundary, never every line of a large map per particle.
 static void moveImpactParticle(ImpactParticle &p,float dt) {
+    if(p.kind==4&&SV_Active()){
+        float dx=p.vx*dt,dy=p.vy*dt,dz=p.vz*dt,len=std::sqrt(dx*dx+dy*dy+dz*dz),hit[6];int owner;
+        if(len>.001f){float extra=p.size*.55f/len;
+            float fraction=SV_Trace(p.x,p.y,p.z,dx*(1+extra),dy*(1+extra),dz*(1+extra),hit,&owner);
+            if(fraction<1){
+                p.x=hit[0]+hit[3]*(p.size*.55f+.1f);p.y=hit[1]+hit[4]*(p.size*.55f+.1f);p.z=hit[2]+hit[5]*(p.size*.55f+.1f);
+                float dot=p.vx*hit[3]+p.vy*hit[4]+p.vz*hit[5];
+                if(dot<0){p.vx-=1.3f*dot*hit[3];p.vy-=1.3f*dot*hit[4];p.vz-=1.3f*dot*hit[5];}
+                p.vx*=.7f;p.vy*=.7f;p.vz*=.7f;
+            }else {p.x+=dx;p.y+=dy;p.z+=dz;}
+        }
+        p.sector=int(R_PointInSubsector(fixed_t(p.x*FRACUNIT),fixed_t(p.y*FRACUNIT))->sector-sectors);return;
+    }
     float tx=p.x+p.vx*dt,ty=p.y+p.vy*dt,tz=p.z+p.vz*dt;
     float start=0;
     for(int crossing=0;crossing<12;++crossing) {
@@ -70,11 +83,11 @@ void tickImpactParticles() {
     constexpr float dt=1.f/TICRATE;
     for(auto &p:impactParticles) {
         p.ox=p.x;p.oy=p.y;p.oz=p.z;p.age+=dt;
-        p.vz+=(p.kind==0?-245.f:0.f)*dt;
+        p.vz+=(p.kind==4?-420.f:p.kind==0?-245.f:0.f)*dt;
         float drag=1.f;p.vx*=drag;p.vy*=drag;
         moveImpactParticle(p,dt);
     }
-    impactParticles.erase(std::remove_if(impactParticles.begin(),impactParticles.end(),[](const auto &p){return p.age>=p.life;}),impactParticles.end());
+    impactParticles.erase(std::remove_if(impactParticles.begin(),impactParticles.end(),[](const auto &p){return p.age>=p.life||(p.kind==4&&!settings.rocketChunks);}),impactParticles.end());
 
 }
 
@@ -102,7 +115,39 @@ static void drawImpactParticles(const Uniforms &camera) {
         float t=std::max(0.f,p.age-(1-renderFraction)/TICRATE);
         float x=p.ox+(p.x-p.ox)*renderFraction,y=p.oy+(p.y-p.oy)*renderFraction,z=p.oz+(p.z-p.oz)*renderFraction;
         if(depth(ptr)<2)continue;
-        if(p.kind==2){
+        if(p.kind==4){
+            float a=p.spin+t*3,b=p.spin*.7f+t*2,ca=std::cos(a),sa=std::sin(a),cb=std::cos(b),sb=std::sin(b);
+            auto rotate=[&](float u,float v,float w){float y=cb*v-sb*w,z=sb*v+cb*w;return std::array<float,3>{ca*u-sa*y,sa*u+ca*y,z};};
+            float light=lighting(&sectors[p.sector]),fade=std::clamp((p.life-t)*3,0.f,1.f);
+            // A connected, chipped 3x3x3 cluster rather than a featureless cube.
+            // Seed is fixed for the particle's lifetime; only exposed faces are drawn.
+            unsigned seed=unsigned(p.spin*100000.f)+1;
+            auto occupied=[&](int u,int v,int w){
+                if(u<0||v<0||w<0||u>2||v>2||w>2)return false;
+                int d=std::abs(u-1)+std::abs(v-1)+std::abs(w-1);
+                if(d<=1)return true;
+                unsigned h=(unsigned(u+3*v+9*w)+seed)*2654435761u;h^=h>>13;
+                return d==2&&(h%4!=0);
+            };
+            const int faces[6][4]={{0,2,3,1},{4,5,7,6},{0,1,5,4},{2,6,7,3},{0,4,6,2},{1,3,7,5}};
+            const int adjacent[6][3]={{0,0,-1},{0,0,1},{0,-1,0},{0,1,0},{-1,0,0},{1,0,0}};
+            for(int w=0;w<3;++w)for(int v=0;v<3;++v)for(int u=0;u<3;++u){
+                if(!occupied(u,v,w))continue;
+                std::array<float,3> corners[8];
+                for(int j=0;j<8;++j)corners[j]=rotate((u+((j&1)?1.f:0.f)-1.5f)/3,(v+((j&2)?1.f:0.f)-1.5f)/3,(w+((j&4)?1.f:0.f)-1.5f)/3);
+                unsigned cell=(unsigned(u+3*v+9*w)+seed)*2246822519u;
+                float grain=.82f+float((cell>>16)%19)*.01f;
+                for(int f=0;f<6;++f){const auto &face=faces[f];const auto &n=adjacent[f];
+                    if(occupied(u+n[0],v+n[1],w+n[2]))continue;
+                    auto normal=rotate(float(n[0]),float(n[1]),float(n[2]));
+                    auto center=rotate((u-1)/3.f,(v-1)/3.f,(w-1)/3.f);
+                    if(normal[0]*(camera.eye[0]-x-center[0]*p.size)+normal[1]*(camera.eye[1]-y-center[1]*p.size)+normal[2]*(camera.eye[2]-z-center[2]*p.size)<0)continue;
+                    float shade=light*grain*(.6f+.4f*std::max(0.f,normal[2]));
+                    auto vertex=[&](int j){auto c=corners[j];Vertex out={x+c[0]*p.size,y+c[1]*p.size,z+c[2]*p.size,0,0,fade,0};out.red=p.color[0]*shade;out.green=p.color[1]*shade;out.blue=p.color[2]*shade;return out;};
+                    quad(particleVertices,vertex(face[0]),vertex(face[1]),vertex(face[2]),vertex(face[3]));
+                }
+            }
+        }else if(p.kind==2){
             int tic=int(t*TICRATE),frame=tic<2?0:tic<5?1:tic<9?2:tic<13?3:4;
             float cs=std::cos(p.spin),sn=std::sin(p.spin),light=std::max(.25f,lighting(&sectors[p.sector]));
             for(int i=0;i<uziDustCounts[frame];++i){const auto &f=uziDustFrames[frame][i];

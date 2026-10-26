@@ -1,6 +1,7 @@
 /* Footsteps. A step falls every stride walked on the ground, the stride
  * growing with speed, so walking steps about twice a second and running
- * three times. Landing from a fall is a step too. Monsters are followed only
+ * three times, harder. Landing from a fall is a step too, harder the faster
+ * the fall. Each step plays the footfall and the kit after it. Monsters are followed only
  * while they wade, for their splashes. See steps.h. */
 #include <ctype.h>
 #include <math.h>
@@ -11,6 +12,8 @@
 #include "w_wad.h"
 #include "impact_synth.h"
 #include "steps.h"
+#include "../game_profile.h"
+#include "../game_materials.h"
 
 #define WADERS 64
 #define MONSTER_STRIDE 44.0f  /* monsters walk in jumps; a splash every so many units */
@@ -18,10 +21,23 @@
 
 extern int numflats;
 
-static int starts(const char *name, const char *prefix) { return !strncmp(name, prefix, strlen(prefix)); }
 
-/* What a floor flat sounds like underfoot. SLIME09-12 are hot rock and
-   SLIME13 on are metal in DOOM II, only the first eight are sludge. */
+/* What a floor is made of (Game_FlatSurface), as a step: the same class
+   the room's echo hears, so the two can't disagree. Water splashes light,
+   other liquids thick. */
+static int step_kind(const char *name)
+{
+    switch (Game_FlatSurface(name))
+    {
+    case GAME_SURFACE_LIQUID: return Game_LiquidFlat(name) == GAME_LIQUID_THICK ? IMPACT_SPLASH_THICK : IMPACT_SPLASH_WATER;
+    case GAME_SURFACE_METAL: return IMPACT_STEP_METAL;
+    case GAME_SURFACE_WOOD: return IMPACT_STEP_WOOD;
+    case GAME_SURFACE_FLESH: case GAME_SURFACE_SOIL: case GAME_SURFACE_FABRIC: return IMPACT_STEP_SOFT;
+    default: return IMPACT_STEP_STONE;
+    }
+}
+
+/* What a floor flat sounds like underfoot, named once per WAD. */
 static int floor_kind(int pic)
 {
     static signed char *kinds;
@@ -36,21 +52,7 @@ static int floor_kind(int pic)
             char name[9];
             for (int c = 0; c < 8; ++c) name[c] = (char)toupper((unsigned char)lumpinfo[firstflat + i].name[c]);
             name[8] = 0;
-            static const char *const metals[] = { "FLOOR4", "FLOOR5", "FLAT20", "FLAT22", "FLAT23", "CEIL3", "COMP",
-                "GATE", "STEP", "TLITE", "CONS1", NULL };
-            static const char *const woods[] = { "FLAT5_1", "FLAT5_2", "CEIL1_1", "CRATOP", NULL };
-            static const char *const soils[] = { "GRASS", "RROCK19", "RROCK20", "MFLR8_3", "FLAT10", NULL };
-            int kind = IMPACT_STEP_STONE;
-            int sludge = starts(name, "SLIME") && name[5] == '0' && name[6] >= '1' && name[6] <= '8';
-            if (starts(name, "FWATER") || starts(name, "SWATER") || starts(name, "WATER")) kind = IMPACT_SPLASH_WATER;
-            else if (starts(name, "NUKAGE") || starts(name, "BLOOD") || starts(name, "LAVA") || sludge) kind = IMPACT_SPLASH_THICK;
-            else
-            {
-                for (int k = 0; metals[k]; ++k) if (starts(name, metals[k])) kind = IMPACT_STEP_METAL;
-                for (int k = 0; woods[k]; ++k) if (starts(name, woods[k])) kind = IMPACT_STEP_WOOD;
-                for (int k = 0; soils[k]; ++k) if (starts(name, soils[k])) kind = IMPACT_STEP_SOFT;
-            }
-            kinds[i] = (signed char)kind;
+            kinds[i] = (signed char)step_kind(name);
         }
     }
     return pic >= 0 && pic < known ? kinds[pic] : IMPACT_STEP_STONE;
@@ -62,10 +64,21 @@ static int grounded(const mobj_t *mo) { return mo->z <= mo->floorz + FRACUNIT / 
 static int emit(step_event_t *events, int count, int max, int kind, const mobj_t *mo, float level)
 {
     if (count >= max) return count;
-    events[count] = (step_event_t){ kind, units(mo->x), units(mo->y), units(mo->z), level };
+    events[count] = (step_event_t){ kind, units(mo->x), units(mo->y), units(mo->z), level,
+                                  mo == players[consoleplayer].mo };
     return count + 1;
 }
-static float loudness(int kind) { return wet(kind) ? 0.55f : kind == IMPACT_STEP_METAL ? 0.38f : 0.35f; }
+/* A step of the player's: the footfall and the kit rattling after it
+   (Step_Layers), by how hard it lands and what they carry. */
+static int emit_step(step_event_t *events, int count, int max, int kind, const mobj_t *mo, float force)
+{
+    const player_t *player = mo->player;
+    impact_layer_t layers[3];
+    int layer_count = Step_Layers(kind, force, player ? player->armortype : 0,
+                                  player ? Game_WeaponHeft(player->readyweapon) : 0, layers);
+    for (int i = 0; i < layer_count; ++i) count = emit(events, count, max, layers[i].kind, mo, layers[i].level);
+    return count;
+}
 
 /* The player: a step every stride on the ground, and on landing. */
 static int player_steps(step_event_t *events, int count, int max)
@@ -81,7 +94,8 @@ static int player_steps(step_event_t *events, int count, int max)
     float moved = hypotf(x - last_x, y - last_y), fall = last_z - z;
     last_x = x; last_y = y; last_z = z;
     if (moved > 64) { walked = 0; was_grounded = ground; return count; }  /* teleported */
-    if (ground && !was_grounded && fall > 6) count = emit(events, count, max, kind, mo, 1.4f * loudness(kind));
+    /* Landing: harder the faster the fall (the last tic's drop). */
+    if (ground && !was_grounded && fall > 6) count = emit_step(events, count, max, kind, mo, 1 + fminf((fall - 6) / 14, 1));
     was_grounded = ground;
     if (!ground) return count;
     if (moved < 0.5f) { walked = 0; return count; }
@@ -89,7 +103,8 @@ static int player_steps(step_event_t *events, int count, int max)
     float stride = moved * TICRATE / (1.4f + 0.1f * moved);
     if (walked == 0) walked = 0.6f * stride;  /* the first comes soon after setting off */
     walked += moved;
-    if (walked >= stride) { walked -= stride; count = emit(events, count, max, kind, mo, loudness(kind)); }
+    /* Force: 0 at a walk (8 units a tic), 1 at a run (16). */
+    if (walked >= stride) { walked -= stride; count = emit_step(events, count, max, kind, mo, fminf(fmaxf((moved - 8) / 8, 0), 1)); }
     return count;
 }
 
@@ -104,7 +119,7 @@ static int monster_splashes(step_event_t *events, int count, int max)
     float lx = units(listener->x), ly = units(listener->y);
     for (thinker_t *th = thinkercap.next; th && th != &thinkercap; th = th->next)
     {
-        if (th->function.acp1 != (actionf_p1)P_MobjThinker) continue;
+        if (!Game_ThinkerIsMobj(th)) continue;
         const mobj_t *mo = (const mobj_t *)th;
         if (mo->player || !(mo->flags & MF_SHOOTABLE) || (mo->flags & MF_CORPSE) || mo->health <= 0 || !grounded(mo)) continue;
         int kind = floor_kind(mo->subsector->sector->floorpic);

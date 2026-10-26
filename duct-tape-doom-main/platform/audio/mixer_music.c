@@ -32,7 +32,7 @@ static sf2_bank_t*	bank;
 static score_t		score;
 static music_player_t	player;
 static const music_synth_t*	synth;
-static boolean		song_loaded, paused;
+static boolean		song_loaded, music_paused;
 static float		volume = 8 / 15.0f;
 static drmp3 mp3;
 static boolean mp3_loaded,mp3_playing,mp3_loop;
@@ -105,9 +105,9 @@ void MixerMusic_Play (boolean loop)
 {
     if (!song_loaded)
 	return;
-    if(mp3_loaded){mp3_loop=loop;mp3_fraction=0;mp3_playing=true;paused=false;drmp3_seek_to_pcm_frame(&mp3,0);mp3_sample(mp3_current);mp3_sample(mp3_next);return;}
+    if(mp3_loaded){mp3_loop=loop;mp3_fraction=0;mp3_playing=true;music_paused=false;drmp3_seek_to_pcm_frame(&mp3,0);mp3_sample(mp3_current);mp3_sample(mp3_next);return;}
     Player_Start (&player, &score, synth, loop);
-    paused = false;
+    music_paused = false;
 }
 
 void MixerMusic_Stop (void)
@@ -116,8 +116,8 @@ void MixerMusic_Stop (void)
     Player_Stop (&player);
 }
 
-void MixerMusic_Pause (void) { paused = true; }
-void MixerMusic_Resume (void) { paused = false; }
+void MixerMusic_Pause (void) { music_paused = true; }
+void MixerMusic_Resume (void) { music_paused = false; }
 
 void MixerMusic_SetVolume (int level)
 {
@@ -135,7 +135,7 @@ struct tsf* MixerMusic_UseBank (struct tsf* using)
 void MixerMusic_Render (float* stereo, int frames)
 {
     if(mp3_loaded){
-        if(paused||!mp3_playing)return;
+        if(music_paused||!mp3_playing)return;
         for(int n=0;n<frames&&mp3_playing;++n){
             for(int c=0;c<2;++c)stereo[2*n+c]+=(mp3_current[c]+(mp3_next[c]-mp3_current[c])*(float)mp3_fraction)*volume;
             mp3_fraction+=mp3_step;
@@ -143,7 +143,7 @@ void MixerMusic_Render (float* stereo, int frames)
         }
         return;
     }
-    if (paused || !player.playing)
+    if (music_paused || !player.playing)
 	return;
     Player_Mix (&player, stereo, frames, volume * (synth == &SF2_Synth ? SF2_GAIN : OPL_GAIN));
 }

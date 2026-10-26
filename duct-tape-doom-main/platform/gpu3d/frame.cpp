@@ -8,7 +8,7 @@ namespace gpu3d {
 // coordinates place the 640x400 image at a whole-pixel scale in the middle;
 // beyond it the clamped border texels dim the view.
 static std::vector<Vertex> settingsQuad;
-static std::vector<Vertex> toastyQuad;
+static std::vector<Vertex> toastyQuad,romeroQuad;
 static float settingsOrigin[2]={},settingsScale=1;
 static void present(SDL_GPUCommandBuffer *command,SDL_GPUTexture *target,const FrameView &view) {
     SDL_GPUColorTargetInfo info={};
@@ -26,6 +26,11 @@ static void present(SDL_GPUCommandBuffer *command,SDL_GPUTexture *target,const F
         SDL_GPUTextureSamplerBinding portrait={gpu(toastyTexture),linearClamp};
         SDL_BindGPUFragmentSamplers(pass,0,&portrait,1);
         drawVertices(pass,toastyQuad);
+    }
+    if(!romeroQuad.empty() && romeroTexture) {
+        SDL_BindGPUGraphicsPipeline(pass,settingsPipeline);
+        SDL_GPUTextureSamplerBinding portrait={gpu(romeroTexture),linearClamp};
+        SDL_BindGPUFragmentSamplers(pass,0,&portrait,1);drawVertices(pass,romeroQuad);
     }
     if(!settingsQuad.empty()) {
         SDL_BindGPUGraphicsPipeline(pass,settingsPipeline);
@@ -233,6 +238,7 @@ static void drawScene(SDL_GPUCommandBuffer *render,SDL_GPURenderPass *pass,const
     for(const auto &batch:effectBatches) {bindImage(pass,images.at(-1-batch.first).texture,linearClamp);drawVertices(pass,batch.second);}
     SDL_BindGPUGraphicsPipeline(pass,effectAddPipeline);
     for(const auto &batch:effectAddBatches) {bindImage(pass,images.at(-1-batch.first).texture,linearClamp);drawVertices(pass,batch.second);}
+    SDL_BindGPUGraphicsPipeline(pass,crestPipeline);drawVertices(pass,crestVertices);
     // Window glass over everything behind it, shards included; it writes no depth.
     if(!glassVertices.empty()) {
         SDL_BindGPUGraphicsPipeline(pass,glassPipeline);
@@ -313,6 +319,7 @@ static void drawBloom(SDL_GPUCommandBuffer *render,const FrameView &view,const U
     SDL_PushGPUVertexUniformData(render,0,&camera,sizeof(camera));
     SDL_GPUTextureSamplerBinding palette={paletteTexture,nearestClamp};
     SDL_BindGPUFragmentSamplers(glowPass,1,&palette,1);
+    bindEmissionEdges(render,glowPass,camera);
     for(const auto &batch:batches) if(!batch.second.empty()) {bindSurface(render,glowPass,batch.first,0,false);drawVertices(glowPass,batch.second);}
     // The sky hides glow behind it: a covered texel with no emission.
     SDL_GPUTextureSamplerBinding solid={solidTexel,nearestClamp};
@@ -397,7 +404,11 @@ void I_Render3DPresent(const unsigned *pixels,const unsigned *palette) {
     SDL_GPUCommandBuffer *command=SDL_AcquireGPUCommandBuffer(device);
     if(!command) {fprintf(stderr,"GPU command buffer: %s\n",SDL_GetError());return;}
     SDL_GPUTexture *swapchain=nullptr;Uint32 drawableWidth=0,drawableHeight=0;
-    if(!SDL_WaitAndAcquireGPUSwapchainTexture(command,gameWindow,&swapchain,&drawableWidth,&drawableHeight)||!swapchain) {
+    // A hidden window (render checks) has no swapchain: the frame is drawn for capture() alone.
+    if(SDL_GetWindowFlags(gameWindow)&SDL_WINDOW_HIDDEN) {
+        int pw=1,ph=1;SDL_GetWindowSizeInPixels(gameWindow,&pw,&ph);drawableWidth=(Uint32)pw;drawableHeight=(Uint32)ph;
+    }
+    else if(!SDL_WaitAndAcquireGPUSwapchainTexture(command,gameWindow,&swapchain,&drawableWidth,&drawableHeight)||!swapchain) {
         flushUploads();SDL_SubmitGPUCommandBuffer(command);return;
     }
     uint64_t frameStart=SDL_GetTicksNS();
@@ -432,6 +443,15 @@ void I_Render3DPresent(const unsigned *pixels,const unsigned *palette) {
     for(auto &v:hud)v.x=(v.x*view.uiWidth+2*view.uiX+view.uiWidth-width)/width;
     std::vector<Vertex> cross=crosshairVertices(view.worldW,view.worldH);
     std::vector<const std::vector<Vertex>*> transient={&hud,&cross};
+    romeroQuad.clear();
+    if(romeroAge>=0 && romeroTexture){
+        float t=romeroAge,rise=std::clamp(t/.15f,0.f,1.f),fly=std::clamp((t-.65f)/.6f,0.f,1.f);
+        float h=1.0f*(1-.65f*fly),w=h*romeroAspect*drawableHeight/drawableWidth;
+        float shake=(t>.15f&&t<.65f)?1.f:0.f;
+        float cx=romeroCorner*1.5f*fly*fly+.055f*std::sin(t*173)*shake;
+        float top=-1+(1-std::pow(1-rise,3.f))*1.3f+1.8f*fly*fly+.07f*std::sin(t*219)*shake;
+        screenQuad(romeroQuad,cx-w*.5f,top,w,h,0,0,1,1);transient.push_back(&romeroQuad);
+    }
     toastyQuad.clear();
     if(toastyVisible>0 && toastyTexture) {
         float h=.88f,w=h*toastyAspect*drawableHeight/drawableWidth;
@@ -456,7 +476,7 @@ void I_Render3DPresent(const unsigned *pixels,const unsigned *palette) {
     if(camera.materials[1]>0)drawBloom(render,view,camera,weapons);
     stage(3);
     if(render!=command)submitProfiled(render,frameStart);
-    present(command,swapchain,view);
+    if(swapchain)present(command,swapchain,view);
     flushUploads();
     if(screenshotPending||renderCheckDue()) {screenshotPending=false;capture(command,view,(int)drawableWidth,(int)drawableHeight);}
     else if(!SDL_SubmitGPUCommandBuffer(command)) I_Error((char*)"GPU rendering failed: %s",SDL_GetError());

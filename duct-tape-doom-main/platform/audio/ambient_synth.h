@@ -1,5 +1,6 @@
 /* The steady sounds of what the map's textures show: lamps buzzing, screens
- * and computers humming, nukage bubbling, lava and fire, water, wind. Made
+ * and computers humming, nukage bubbling, lava and fire, water, wind, rain
+ * on the windows. Made
  * up from nothing like the impact effects, for the WAD has none. Each kind
  * renders any length; a seed picks the variation, so two pools never
  * bubble in step. */
@@ -19,6 +20,8 @@ enum {
     AMBIENT_FIRE,        /* fire walls: a roar and crackling */
     AMBIENT_MAGMA,       /* cracked hot rock: faint ticks over a rumble */
     AMBIENT_WIND,        /* under the sky: gusts, a whistle */
+    AMBIENT_RAIN,        /* under the sky while it rains: a hiss of drops, a patter, drips */
+    AMBIENT_GLASS_RAIN,  /* window panes while it rains: drops tapping the glass, a trickle */
     AMBIENT_ROOM,        /* the room tone: faint dark air, when nothing else is heard */
     AMBIENT_KINDS
 };

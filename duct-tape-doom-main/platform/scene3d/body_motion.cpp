@@ -123,7 +123,8 @@ static void addImpulse(const mobj_t &thing,const Body &before,float hitZ,bool hi
     list.push_back(impulse);
 }
 void watchBodies() {
-    if((!settings.deathMotion&&!settings.hitFlinch&&!settings.deathDirector&&!settings.wounds)||levelSerial!=r_levelserial) {bodyMotionShutdown();return;}
+    bool spray=settings.blood&&settings.bloodSpray;
+    if((!settings.deathMotion&&!settings.hitFlinch&&!settings.deathDirector&&!settings.wounds&&!spray)||levelSerial!=r_levelserial) {bodyMotionShutdown();return;}
     if(bodyLevelSerial!=r_levelserial) {bodyMotionShutdown();bodyLevelSerial=r_levelserial;}
     for(auto &entry:watched)entry.second.seen=false;
     static std::vector<mobj_t*> bodies;bodies.clear();
@@ -136,16 +137,23 @@ void watchBodies() {
         Body &body=found->second;body.seen=true;
         bool died=body.alive&&!alive,hurt=alive&&thing->health<body.health;
         if(alive&&!body.alive) {impulses.erase(thing);forgetDeath(thing);forgetWounds(thing);} // Raised again.
-        if(died||(hurt&&settings.hitFlinch)) {
+        if(died||(hurt&&(settings.hitFlinch||spray))) {
             float z=0,hdx=0,hdy=0,side=0;bool known=false;const mobj_t *attack=nullptr;
             auto hit=hits.find(thing);
+            bool missile=false;
             if(hit!=hits.end()&&leveltime-hit->second.tic<=1) {
                 const Hit &h=hit->second;attack=h.attack;
                 if(h.count>0) {z=h.z/h.count;hdx=h.dx;hdy=h.dy;side=h.side/h.count;known=true;}
-                else if(h.missile) {z=h.missileZ;side=h.missileSide;known=true;}
+                else if(h.missile) {z=h.missileZ;side=h.missileSide;known=true;missile=true;}
             }
-            if(died)impulses.erase(thing); // Living hit flinches must not carry into death.
-            if(!died||settings.deathMotion)addImpulse(*thing,body,z,known,hdx,hdy,died);
+            if(died)impulses.erase(thing);
+            // Blood thrown by the blow (hitscan hits already sprayed their own).
+            if(spray&&(died||missile)) {
+                float dx,dy,speed;pushOf(*thing,body,hdx,hdy,dx,dy,speed);
+                if(died)sprayKill(*thing,dx,dy,speed,known?z:-1,gibbed(*thing),std::max(0,-thing->health));
+                else sprayHurt(*thing,dx,dy,z,body.health-thing->health);
+            }
+            if(died?settings.deathMotion:settings.hitFlinch)addImpulse(*thing,body,z,known,hdx,hdy,died);
             if(died&&settings.deathDirector) {
                 float dx,dy,speed;pushOf(*thing,body,hdx,hdy,dx,dy,speed);
                 // Hit height: 1 well above the hip, -1 at the legs (as addImpulse).

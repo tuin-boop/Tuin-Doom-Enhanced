@@ -251,6 +251,7 @@ boolean P_CheckAmmo (player_t* player)
 //
 // P_FireWeapon.
 //
+static int romeroAlt[MAXPLAYERS];
 void P_FireWeapon (player_t* player)
 {
     statenum_t	newstate;
@@ -258,6 +259,7 @@ void P_FireWeapon (player_t* player)
     if (!P_CheckAmmo (player))
 	return;
 	
+    romeroAlt[player-players]=(player->cmd.buttons&BT_ROMERO_ALT)!=0;
     P_SetMobjState (player->mo, S_PLAY_ATK1);
     newstate = weaponinfo[player->readyweapon].atkstate;
     if (R_WeaponAttack) R_WeaponAttack(player);
@@ -578,7 +580,10 @@ A_FireMissile
     if (R_MuzzleFlash) R_MuzzleFlash(player->mo, player->readyweapon, -1);
 
     player->ammo[weaponinfo[player->readyweapon].ammo]--;
-    P_SpawnPlayerMissile (player->mo, MT_ROCKET);
+    if(romeroAlt[player-players]&&(player->cheats&CF_ROMERO)&&!netgame&&!demoplayback&&!demorecording)
+        P_RomeroDrunk(player->mo);
+    else P_SpawnPlayerMissile (player->mo, MT_ROCKET);
+    romeroAlt[player-players]=0;
 }
 
 
@@ -625,14 +630,25 @@ A_FirePlasma
 // the height of the intended target
 //
 fixed_t		bulletslope;
-// With nothing to autoaim at, a mouselook shot follows the view instead of
-// flying level. Demos and netgames keep vanilla aiming.
+// Mouselook shots follow the view even with a target in front of the player;
+// with classicaim they autoaim first and follow the view only with nothing
+// to aim at. Demos and netgames keep vanilla aiming.
 static boolean	bulletfree;
 
 
 void P_BulletSlope (mobj_t*	mo)
 {
     angle_t	an;
+    boolean	look = freeaim && mo->player
+	&& !demoplayback && !demorecording && !netgame;
+
+    bulletfree = look && !classicaim;
+    if (bulletfree)
+    {
+	bulletslope = (fixed_t)(tan (tourpitch)*FRACUNIT);
+	linetarget = NULL;
+	return;
+    }
     
     // see which target is to be aimed at
     an = mo->angle;
@@ -648,8 +664,7 @@ void P_BulletSlope (mobj_t*	mo)
 	    bulletslope = P_AimLineAttack (mo, an, 16*64*FRACUNIT);
 	}
     }
-    bulletfree = !linetarget && freeaim && mo->player
-	&& !demoplayback && !demorecording && !netgame;
+    bulletfree = look && !linetarget;
     if (bulletfree)
 	bulletslope = (fixed_t)(tan (tourpitch)*FRACUNIT);
 }

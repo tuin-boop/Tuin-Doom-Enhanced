@@ -18,7 +18,7 @@
 
 /* An opening: a two-sided line between sectors a and b. */
 typedef struct { int line, a, b; float ax, ay, bx, by; } opening_t;
-static opening_t *openings;
+static opening_t *graph_openings;
 static int opening_count, *sector_first, *sector_openings;
 static unsigned built = ~0u;
 
@@ -35,6 +35,7 @@ static unsigned char *glass;
 static int glass_lines;
 static unsigned glass_serial = ~0u;
 static int glass_shown = 1;
+static int follow_dirty = 1;
 
 static float units(fixed_t v) { return v / (float)FRACUNIT; }
 
@@ -50,16 +51,16 @@ static float nearest(const opening_t *o, float x, float y, float *px, float *py)
 
 static void build(void)
 {
-    free(openings); free(sector_first); free(sector_openings); free(ways);
+    free(graph_openings); free(sector_first); free(sector_openings); free(ways);
     opening_count = 0;
-    openings = malloc((size_t)(numlines > 0 ? numlines : 1) * sizeof(opening_t));
+    graph_openings = malloc((size_t)(numlines > 0 ? numlines : 1) * sizeof(opening_t));
     sector_first = calloc((size_t)numsectors + 1, sizeof(int));
-    if (!openings || !sector_first) { built = ~0u; return; }
+    if (!graph_openings || !sector_first) { built = ~0u; return; }
     for (int i = 0; i < numlines; ++i)
     {
         const line_t *line = &lines[i];
         if (!line->frontsector || !line->backsector || line->frontsector == line->backsector) continue;
-        opening_t *o = &openings[opening_count++];
+        opening_t *o = &graph_openings[opening_count++];
         o->line = i; o->a = (int)(line->frontsector - sectors); o->b = (int)(line->backsector - sectors);
         o->ax = units(line->v1->x); o->ay = units(line->v1->y); o->bx = units(line->v2->x); o->by = units(line->v2->y);
         ++sector_first[o->a + 1]; ++sector_first[o->b + 1];
@@ -72,8 +73,8 @@ static void build(void)
     if (!sector_openings || !fill || !ways) { free(fill); built = ~0u; return; }
     for (int i = 0; i < opening_count; ++i)
     {
-        sector_openings[sector_first[openings[i].a] + fill[openings[i].a]++] = i;
-        sector_openings[sector_first[openings[i].b] + fill[openings[i].b]++] = i;
+        sector_openings[sector_first[graph_openings[i].a] + fill[graph_openings[i].a]++] = i;
+        sector_openings[sector_first[graph_openings[i].b] + fill[graph_openings[i].b]++] = i;
     }
     free(fill);
     search = 0;
@@ -137,7 +138,7 @@ static entry_t pop(void)
 
 /* loss_before and cutoff_before are the way's up to this opening, not
    counting crossing it: a sound inside a shut door's sector is heard from
-   its openings, not through the door it is. */
+   its graph_openings, not through the door it is. */
 static void reach(int q, float length, float loss, float cutoff, float cross_x, float cross_y, float entry_x, float entry_y,
                   float loss_before, float cutoff_before)
 {
@@ -157,7 +158,7 @@ void Acoustic_Listen(float x, float y, int sector, float range)
     for (int k = sector_first[sector]; k < sector_first[sector + 1]; ++k)
     {
         int p = sector_openings[k];
-        float px, py, cutoff, d = nearest(&openings[p], x, y, &px, &py), db = crossing(&openings[p], &cutoff);
+        float px, py, cutoff, d = nearest(&graph_openings[p], x, y, &px, &py), db = crossing(&graph_openings[p], &cutoff);
         reach(p, d, db, cutoff, px, py, px, py, 0, OPEN_HZ);
     }
     float limit = range + UNITS_PER_DB * MOST_LOSS;
@@ -167,15 +168,15 @@ void Acoustic_Listen(float x, float y, int sector, float range)
         const way_t *w = &ways[e.opening];
         if (w->stamp != search || e.cost > w->cost) continue;
         if (e.cost > limit) break;
-        const opening_t *p = &openings[e.opening];
+        const opening_t *p = &graph_openings[e.opening];
         int sides[2] = { p->a, p->b };
         for (int s = 0; s < 2; ++s)
             for (int k = sector_first[sides[s]]; k < sector_first[sides[s] + 1]; ++k)
             {
                 int q = sector_openings[k];
                 if (q == e.opening) continue;
-                float cutoff, db = crossing(&openings[q], &cutoff), nx, ny;
-                float hop = nearest(&openings[q], w->cross_x, w->cross_y, &nx, &ny);
+                float cutoff, db = crossing(&graph_openings[q], &cutoff), nx, ny;
+                float hop = nearest(&graph_openings[q], w->cross_x, w->cross_y, &nx, &ny);
                 reach(q, w->length + hop, w->loss + db, fminf(w->cutoff, cutoff), nx, ny, w->entry_x, w->entry_y, w->loss, w->cutoff);
             }
     }
@@ -201,7 +202,7 @@ int Acoustic_Heard(float x, float y, int sector, float (*fade)(float distance, c
         float d = w->length + hypotf(x - w->cross_x, y - w->cross_y);
         float g = fade(d, data) * powf(10, -w->loss / 20);
         if (g <= 0) continue;
-        int from = openings[q].a == sector ? openings[q].b : openings[q].a, i = 0;
+        int from = graph_openings[q].a == sector ? graph_openings[q].b : graph_openings[q].a, i = 0;
         while (i < count && ways_in[i].from != from) ++i;
         if (i == count)
         {
@@ -255,10 +256,11 @@ void Acoustic_Follow(void)
     if (gamestate != GS_LEVEL || !listener || !listener->subsector) return;
     float lx = units(listener->x), ly = units(listener->y);
     int here = (int)(listener->subsector->sector - sectors);
-    if (level == r_levelserial && at == here && fabsf(lx - x) + fabsf(ly - y) <= FOLLOW_MOVED &&
+    if (!follow_dirty && level == r_levelserial && at == here && fabsf(lx - x) + fabsf(ly - y) <= FOLLOW_MOVED &&
         gametic >= tic && gametic - tic < FOLLOW_TICS) return;
     Acoustic_Listen(lx, ly, here, FOLLOW_REACH);
     x = lx; y = ly; tic = gametic; at = here; level = r_levelserial;
+    follow_dirty = 0;
 }
 
 void Acoustic_Glass(int line, int whole)
@@ -270,6 +272,21 @@ void Acoustic_Glass(int line, int whole)
         glass_lines = glass ? numlines : 0;
         glass_serial = r_levelserial;
     }
-    if (line >= 0 && line < glass_lines) glass[line] = whole ? 1 : 2;
+    if (line >= 0 && line < glass_lines && glass[line] != (whole ? 1 : 2))
+    {
+        glass[line] = whole ? 1 : 2;
+        /* The break sound starts now: it must not inherit the intact pane's
+           muffling from the enemy's gunshot earlier in this same tic. */
+        follow_dirty = 1;
+    }
 }
-void Acoustic_ShowGlass(int shown) { glass_shown = shown != 0; }
+int Acoustic_GlassWhole(int line)
+{
+    return glass_shown && glass && glass_serial == r_levelserial && line >= 0 && line < glass_lines && glass[line] == 1;
+}
+void Acoustic_ShowGlass(int shown)
+{
+    if (glass_shown == (shown != 0)) return;
+    glass_shown = shown != 0;
+    follow_dirty = 1;
+}

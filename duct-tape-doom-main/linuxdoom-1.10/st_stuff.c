@@ -477,6 +477,9 @@ static unsigned char cheat_notarget_seq[] = {
     SCRAMBLE('n'), SCRAMBLE('o'), SCRAMBLE('t'), SCRAMBLE('a'),
     SCRAMBLE('r'), SCRAMBLE('g'), SCRAMBLE('e'), SCRAMBLE('t'), 0xff
 };
+unsigned p_romero_serial;
+static unsigned char cheat_romero_seq[] = {SCRAMBLE('j'),SCRAMBLE('o'),SCRAMBLE('h'),SCRAMBLE('n'),SCRAMBLE('r'),SCRAMBLE('o'),SCRAMBLE('m'),SCRAMBLE('e'),SCRAMBLE('r'),SCRAMBLE('o'),SCRAMBLE('g'),SCRAMBLE('o'),SCRAMBLE('d'),0xff};
+static cheatseq_t cheat_romero={cheat_romero_seq,0};
 static cheatseq_t cheat_notarget = { cheat_notarget_seq, 0 };
 cheatseq_t	cheat_mus = { cheat_mus_seq, 0 };
 cheatseq_t	cheat_god = { cheat_god_seq, 0 };
@@ -572,6 +575,11 @@ ST_Responder (event_t* ev)
       plyr->message = debugnotarget ? "NOTARGET ON" : "NOTARGET OFF";
     }
 
+    if (!netgame && !demoplayback && !demorecording && cht_CheckCheat(&cheat_romero, ev->data1)) {
+      plyr->cheats ^= CF_ROMERO;
+      ++p_romero_serial;
+      plyr->message = (plyr->cheats & CF_ROMERO) ? "ROMERO ROCKETS ON" : "ROMERO ROCKETS OFF";
+    }
     if (!netgame)
     {
       // b. - enabled for more debug fun.

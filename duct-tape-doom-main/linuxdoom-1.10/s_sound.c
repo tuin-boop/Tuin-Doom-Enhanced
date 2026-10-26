@@ -148,6 +148,7 @@ int
 S_AdjustSoundParams
 ( mobj_t*	listener,
   mobj_t*	source,
+  fixed_t	reach,
   int*		vol,
   int*		sep,
   int*		pitch );
@@ -319,6 +320,7 @@ S_StartSoundAtVolume
   {
     rc = S_AdjustSoundParams(players[consoleplayer].mo,
 			     origin,
+			     I_SoundReach(sfx_id),
 			     &volume,
 			     &sep,
 			     &pitch);
@@ -634,6 +636,7 @@ void S_UpdateSounds(void* listener_p)
 		{
 		    audible = S_AdjustSoundParams(listener,
 						  c->origin,
+						  I_SoundReach(sfx - S_sfx),
 						  &volume,
 						  &sep,
 						  &pitch);
@@ -806,6 +809,7 @@ int
 S_AdjustSoundParams
 ( mobj_t*	listener,
   mobj_t*	source,
+  fixed_t	reach,
   int*		vol,
   int*		sep,
   int*		pitch )
@@ -822,6 +826,10 @@ S_AdjustSoundParams
 
     // From _GG1_ p.428. Appox. eucledian distance fast.
     approx_dist = adx + ady - ((adx < ady ? adx : ady)>>1);
+
+    // A loud sound (I_SoundReach) is as far off as a quiet one nearer.
+    if (reach > FRACUNIT)
+	approx_dist = FixedDiv (approx_dist, reach);
     
     /* Positional sounds use the same falloff on every map. The original
        map-8 minimum of 15 is full volume in our 0..15 mixer range. */

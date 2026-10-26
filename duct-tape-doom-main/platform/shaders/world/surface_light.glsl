@@ -8,6 +8,7 @@ void surfaceLight(SectorLit lit,bool mapped,vec3 normal,vec3 screenNormal,bool g
                   vec3 dp1,vec3 dp2,vec2 duv1,vec2 duv2,inout vec3 pulse,inout vec3 specular,inout vec3 pickupTint) {
     uint bakeFlags=uint(c.flashlightTint.w);
     vec4 baked=lit.baked,direction=lit.direction;vec3 bounce=lit.bounce;float shownLight=lit.shown,occlusion=lit.occlusion;
+    vec3 specularBefore=specular;
     uvec2 mask=vLightMask;
     // Bake-only lights: the bake's direction (share in b) stands in
     // for the static lights' dynamic copies, so its light also takes
@@ -17,7 +18,10 @@ void surfaceLight(SectorLit lit,bool mapped,vec3 normal,vec3 screenNormal,bool g
     vec3 staticLight=useBake?baked.rgb*staticKept*occlusion:vec3(0);
     float staticShare=useBake&&c.bake.z>0.0?direction.b:0.0;
     bool staticDetail=staticShare>0.05&&dot(staticLight,vec3(0.299,0.587,0.114))>0.02;
-    bool detail=(vMode&MODE_ROCK)==0u&&(uint(c.flashlightTint.w)&FEATURE_SURFACE_DETAIL)!=0u&&(any(notEqual(mask,uvec2(0)))||staticDetail);
+    // Ice floors (frameMean.a 1, iceFlat) always show their grooves.
+    uint material=uint(round(frameMean.a))&15u;
+    bool ice=material==1u&&!blood&&!glassy;
+    bool detail=(vMode&MODE_ROCK)==0u&&(uint(c.flashlightTint.w)&FEATURE_SURFACE_DETAIL)!=0u&&(any(notEqual(mask,uvec2(0)))||staticDetail||ice);
     // Glass is smooth: its bulge replaces the artwork's bump detail,
     // and it takes a tighter, stronger highlight than painted metal.
     float busy=0.0;
@@ -27,19 +31,25 @@ void surfaceLight(SectorLit lit,bool mapped,vec3 normal,vec3 screenNormal,bool g
         bumped=normalize(mix(bumped,normal,0.8*smoothstep(192.0,1024.0,length(vWorld-c.eye.xyz))));
     float gloss=0.0,shininess=glassy?64.0:24.0;
     if(glassy) gloss=0.9;
+    else if(ice&&detail) {gloss=0.8;shininess=56.0;}
     else if(detail) {
         ivec2 p=wrapTexel(ivec2(floor(vUV)),textureSize(image,0));
         uint index=uint(round(texelFetch(image,p,0).r*255.0));
-        gloss=paletteGloss(index);
+        float ramp=0.0;
+        if(material>=2u) materialGloss(material,index,gloss,ramp);
+        else {gloss=paletteGloss(index);ramp=paletteShininess(index);}
         // FEATURE_VARIED_HIGHLIGHTS: each ramp's sharpness is
         // halved where the artwork is grainy and doubled where it runs
         // smooth, per texel. The highlight keeps its energy, so broad
         // ones dim and tight ones brighten against the dark around them;
         // grainy artwork also loses up to a quarter of its gloss.
         if((bakeFlags&FEATURE_VARIED_HIGHLIGHTS)!=0u) {
-            shininess=paletteShininess(index)*exp2(1.0-2.0*busy);
+            shininess=ramp*exp2(1.0-2.0*busy);
             gloss*=(shininess+2.0)/26.0*(1.0-0.25*busy);
         }
+        // Worn plates (plateWear) have lost their polish: a broad, dim
+        // sheen on the bare metal, none where grime sits.
+        if(plateWear>=0.0) {shininess*=0.5;gloss*=0.4*(1.0-plateWear);}
     }
     vec3 view=normalize(c.eye.xyz-vWorld);
     vec3 lampSpecular=vec3(0);
@@ -88,6 +98,15 @@ void surfaceLight(SectorLit lit,bool mapped,vec3 normal,vec3 screenNormal,bool g
             staticLight=shaded;
         }
     }
+    // Ice glints where the edges of its grooves tilt the room's light
+    // toward the eye: only what they catch beyond the flat surface's own
+    // grazing sheen, so the glints sit on ridges over the dark ice, not as
+    // a wash over the whole floor.
+    if(ice&&detail) {
+        float flatSheen=pow(1.0-saturate(dot(reflect(-view,normal),normal)),8.0);
+        float ridge=pow(1.0-saturate(dot(reflect(-view,bumped),normal)),8.0);
+        specular+=vec3(lit.light*saturate(ridge-flatSheen)*0.6);
+    }
     vec3 indirect=mapped?bounce*c.bake.y*occlusion:vec3(0);
     vec3 lampPulse=staticLight+indirect;
     float stipple=flashStipple(vWorld,normal);
@@ -132,4 +151,10 @@ void surfaceLight(SectorLit lit,bool mapped,vec3 normal,vec3 screenNormal,bool g
     pulse+=lampPulse*combinedKept;
     lampLight+=max(lampPulse,vec3(0))*combinedKept;
     specular+=lampSpecular*combinedKept;
+    // Ice glints in its own deep blue, not white, so the ridges keep the
+    // contrast of the original art instead of washing it pale.
+    if(ice&&detail) {
+        vec3 hue=color.rgb/max(max(color.r,color.g),max(color.b,0.05));
+        specular=specularBefore+(specular-specularBefore)*mix(vec3(1),hue,0.8);
+    }
 }

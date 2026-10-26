@@ -12,6 +12,10 @@ void billboardLight(vec4 color,inout vec3 pulse,inout vec3 specular) {
     vec3 across=vec3(c.right.xy,0);
     vec3 n=normalize(across*packed.x-vec3(0,0,1)*packed.y+toward*sqrt(saturate(1.0-dot(packed,packed))));
     vec3 view=normalize(c.eye.xyz-vWorld);
+    if((vMode&MODE_VOXEL)!=0u) {
+        n=normalize(cross(dFdx(vWorld),dFdy(vWorld)));
+        if(dot(n,view)<0.0)n=-n;
+    }
     uvec2 mask=vLightMask;
     // MODE_WET_SPRITE: airborne blood glints on its rounded normals like the
     // floor blood, in a brighter palette red and two hard steps.

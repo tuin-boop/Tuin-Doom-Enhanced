@@ -57,7 +57,7 @@ void uploadFrame(SDL_GPUCommandBuffer *command,const std::vector<const std::vect
         stream(cursor,vertices.size()-cursor);
     };
     for(const auto *groups:{&batches,&shadowBatches,&decalBatches,&effectBatches,&effectAddBatches,&mirrorBatches})for(const auto &batch:*groups)place(batch.second);
-    place(rubbleEmissionVertices);place(mistVertices);place(shaftVertices);place(particleVertices);place(heatVertices);place(skyVertices);place(glassVertices);
+    place(rubbleEmissionVertices);place(mistVertices);place(shaftVertices);place(particleVertices);place(crestVertices);place(heatVertices);place(skyVertices);place(glassVertices);
     for(const auto *vertices:transient)place(*vertices);
     for(auto it=residentVertices.begin();it!=residentVertices.end();){
         if(it->second.seen!=uploadSerial){SDL_ReleaseGPUBuffer(device,it->second.arena.buffer);it=residentVertices.erase(it);}else ++it;
@@ -141,6 +141,15 @@ void bindWorld(SDL_GPURenderPass *pass,SDL_GPUTexture *reflection) {
     SDL_GPUBuffer *storage[]={blockerArena.buffer,sectorArena.buffer};
     SDL_BindGPUFragmentStorageBuffers(pass,0,storage,2);
 }
+// The bloom pass's glowing liquid edges: shore map, caustic pattern (holding
+// the edge strip), sector heights and the camera.
+void bindEmissionEdges(SDL_GPUCommandBuffer *command,SDL_GPURenderPass *pass,const Uniforms &camera) {
+    SDL_GPUTextureSamplerBinding samplers[]={{shoreTexture?gpu(shoreTexture):dummyContact,linearClamp},
+        {causticPattern?gpu(causticPattern):dummyContact,nearestClamp}};
+    SDL_BindGPUFragmentSamplers(pass,3,samplers,2);
+    SDL_BindGPUFragmentStorageBuffers(pass,0,&sectorArena.buffer,1);
+    SDL_PushGPUFragmentUniformData(command,1,&camera,sizeof(camera));
+}
 void bindLightBlockers(SDL_GPURenderPass *pass) {SDL_BindGPUFragmentStorageBuffers(pass,0,&blockerArena.buffer,1);}
 // Binds a batch texture with its next animation frame and crossfade amount;
 // world passes also take its screen glass frame and bump relief.
@@ -155,9 +164,11 @@ void bindSurface(SDL_GPUCommandBuffer *command,SDL_GPURenderPass *pass,int key,U
         SDL_GPUTextureSamplerBinding relief={binding.image->relief?gpu(binding.image->relief):dummyRelief,nearestClamp};
         SDL_BindGPUFragmentSamplers(pass,15,&relief,1);
     }
+    // The crossfade, the weapon's surroundings (unused here), then the
+    // liquid's frame and cycle averages.
     float blend[36]={binding.blend};
-    std::copy(binding.liquidFrame.begin(),binding.liquidFrame.end(),blend+28);
-    std::copy(binding.liquidCycle.begin(),binding.liquidCycle.end(),blend+32);
+    std::copy(binding.frameMean.begin(),binding.frameMean.end(),blend+28);
+    std::copy(binding.cycleMean.begin(),binding.cycleMean.end(),blend+32);
     SDL_PushGPUFragmentUniformData(command,blendSlot,blend,world?sizeof(blend):4*sizeof(float));
 }
 void bindImage(SDL_GPURenderPass *pass,const GpuTextureRef &texture,SDL_GPUSampler *filter) {

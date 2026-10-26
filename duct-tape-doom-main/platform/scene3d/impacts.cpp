@@ -2,6 +2,9 @@
    debris. */
 #include "internal.h"
 #include "p_digwall.h"
+extern "C" {
+#include "p_solid.h"
+}
 #include "../../../map_world.h"
 extern const lab::MapWorld *SV_MapWorld();
 
@@ -23,12 +26,15 @@ void dropOldLevelImpacts() {
 }
 // A block size map units across (tall times as high), but never under one
 // Doom pixel, set on the Doom-pixel grid at its depth: a pixel of an old
-// sprite rather than a soft speck. The color is lit, then put in the palette.
+// sprite rather than a soft speck. The color is lit, then put in the palette
+// (unless palette is false: liquid crests match the smoothly shaded water).
+// With taken, a block whose Doom-pixel corner is already in it is skipped.
 // A resting block stands on the point instead of centering on it, so a floor
 // does not swallow half of it. Given its unlit color, the flashlight beam
 // lights it too.
+std::unordered_set<uint64_t> crestCells;
 void pixelBlock(std::vector<Vertex> &out,const Uniforms &camera,float x,float y,float z,float size,float tall,const std::array<float,3> &color,bool resting,
-                const std::array<float,3> *albedo) {
+                const std::array<float,3> *albedo,bool palette,std::unordered_set<uint64_t> *taken,float alpha) {
     float d[3]={x-camera.eye[0],y-camera.eye[1],z-camera.eye[2]};
     float depth=d[0]*camera.forward[0]+d[1]*camera.forward[1]+d[2]*camera.forward[2];
     if(depth<4)return;
@@ -37,16 +43,17 @@ void pixelBlock(std::vector<Vertex> &out,const Uniforms &camera,float x,float y,
     float py=(d[0]*camera.up[0]+d[1]*camera.up[1]+d[2]*camera.up[2])/unit;
     float w=std::max(1.0f,std::round(size/unit)),h=std::max(1.0f,std::round(size*tall/unit));
     float left=std::round(px+across-w*0.5f)-across,bottom=std::round(py+100-(resting?0:h*0.5f))-100;
+    if(taken&&!taken->insert((uint64_t)(uint32_t)(int32_t)std::lround(left)<<32|(uint32_t)(int32_t)std::lround(bottom)).second)return;
     std::array<float,3> shade=color;
     if(albedo&&flashlightOn&&flashes.count&&flashes.lights[0].direction[3]>0&&camera.effects[2]==0) {
         const Flash &beam=flashes.lights[0];
         float amount=flashAt(x,y,z,beam);
         if(amount>0)for(int c=0;c<3;++c)shade[c]=std::min(1.0f,shade[c]+(*albedo)[c]*amount*beam.color[c]);
     }
-    auto lit=paletteColor(shade);
+    auto lit=palette?paletteColor(shade):shade;
     auto vertex=[&](float sx,float sz) {
         float r=(sx-px)*unit,u=(sz-py)*unit;
-        Vertex v={x+camera.right[0]*r+camera.up[0]*u,y+camera.right[1]*r+camera.up[1]*u,z+camera.right[2]*r+camera.up[2]*u,0,0,1,0};
+        Vertex v={x+camera.right[0]*r+camera.up[0]*u,y+camera.right[1]*r+camera.up[1]*u,z+camera.right[2]*r+camera.up[2]*u,0,0,alpha,0};
         v.red=lit[0];v.green=lit[1];v.blue=lit[2];return v;
     };
     quad(out,vertex(left,bottom+h),vertex(left+w,bottom+h),vertex(left+w,bottom),vertex(left,bottom));
@@ -68,6 +75,7 @@ bool wallSpan(const line_t &line,int side,int section,WallSpan &span) {
 #include "impact_particles.inc"
 #include "surface_glow.inc"
 #include "fluid_effects.inc"
+#include "environment_reactions.inc"
 
 void wallImpact(line_t *line,int side,fixed_t fx,fixed_t fy,fixed_t fz) {
     if(!line||gamestate!=GS_LEVEL)return;
@@ -165,26 +173,34 @@ void solidBulletImpact(float x,float y,float z,float nx,float ny,float nz){
 }
 void surfaceChip(float x,float y,float z,float nx,float ny,float nz){
     dropOldLevelImpacts();
+    auto tint=rubbleSurfaceColor(x,y,z);
     float now=leveltime/(float)TICRATE;
     const sector_t *room=R_PointInSubsector(fixed_t(x*FRACUNIT),fixed_t(y*FRACUNIT))->sector;
     for(int i=0;i<3&&debris.size()<512;++i){
         float shade=randomRange(.35f,.6f),speed=randomRange(28,55);
         debris.push_back({x,y,z,nx*speed+randomRange(-10,10),ny*speed+randomRange(-10,10),nz*speed+randomRange(12,28),now,
-            .65f,randomRange(.4f,1.f),{shade,shade,shade},lighting(room)});
+            .65f,randomRange(.4f,1.f),{shade*tint[0],shade*tint[1],shade*tint[2]},lighting(room)});
     }
 }
 void craterCrumble(float x,float y,float z){
+    environmentBlast(x,y,z,.35f);
+    if(settings.chainCollapses&&debris.size()<512){
+        auto color=rubbleSurfaceColor(x,y,z);for(float &c:color)c*=.4f;
+        debris.push_back({x,y,z,randomRange(-4,4),randomRange(-4,4),-8,gameSeconds(),3.5f,3.8f,color});
+    }
     dropOldLevelImpacts();
+    auto tint=rubbleSurfaceColor(x,y,z);
     float now=leveltime/(float)TICRATE;
     const sector_t *room=R_PointInSubsector(fixed_t(x*FRACUNIT),fixed_t(y*FRACUNIT))->sector;
     for(int i=0;i<3&&debris.size()<512;++i){
         float shade=randomRange(.35f,.6f);
         debris.push_back({x,y,z,randomRange(-18,18),randomRange(-18,18),randomRange(-25,5),now,
-            1.3f,randomRange(1.5f,3.f),{shade,shade,shade},lighting(room)});
+            1.3f,randomRange(1.5f,3.f),{shade*tint[0],shade*tint[1],shade*tint[2]},lighting(room)});
     }
 }
 void barrelBlast(const mobj_t &thing,float x,float y,float z) {
     dropOldLevelImpacts();
+    environmentBlast(x,y,z+24,1);
     glassBlast(x,y,z+24,128);
     blastLights(x,y,z+24,128);
     float now=gameSeconds();
@@ -213,13 +229,19 @@ static void flatDecal(int sectorIndex,float x,float y,float h,float z,int lump,c
             for(Point p:{polygon[0],polygon[n],polygon[n+1]})decalBatches[lump].push_back(vertex(p));
     }
 }
+// The game's sprite for an effect role; no frames when the game has none.
+static const spritedef_t &effectSprite(game_sprite_role role) {
+    static const spritedef_t none={0,nullptr};
+    int sprite=Game_Sprite(role);
+    return sprite>=0&&sprite<numsprites?sprites[sprite]:none;
+}
 void buildImpacts(const Uniforms &camera) {
     for(auto &batch:decalBatches)batch.second.clear();
-    particleVertices.clear();
+    particleVertices.clear();crestVertices.clear();crestCells.clear();
     dropOldLevelImpacts();
     float now=gameSeconds();
     scorches.erase(std::remove_if(scorches.begin(),scorches.end(),[&](const Scorch &d){return now-d.born>60||now<d.born;}),scorches.end());
-    const auto &blast=sprites[SPR_BEXP];
+    const auto &blast=effectSprite(GAME_SPRITE_EXPLOSION);
     if(blast.numframes>2&&!scorches.empty()) {
         // Scorches reuse a fireball frame's coverage, clipped to the sector floor.
         int lump=firstspritelump+blast.spriteframes[2].lump[0];Image &image=lumpImage(lump,false);
@@ -237,14 +259,21 @@ void buildImpacts(const Uniforms &camera) {
     drawImpactParticles(camera);
     drawFluidEffects(camera);
     drawSurfaceGlows();
+    buildEnvironment(camera);
+    buildElectricalArcs(camera);
     // Debris moves at the tic rate, like the rings, stretches upright while
     // it falls fast and shrinks once before it is gone.
-    for(const auto &p:debris) {
+    for(auto &p:debris) {
         float t=std::floor((now-p.born)*TICRATE)/TICRATE,x=p.x+p.vx*t,y=p.y+p.vy*t,z=p.z+p.vz*t-210*t*t;
         const sector_t *sector=R_PointInSubsector((fixed_t)(x*FRACUNIT),(fixed_t)(y*FRACUNIT))->sector;
         float floor=floorZ(sector)+0.2f;
         size_t index=sector-sectors;
-        if(z<floor&&index<sectorMist.size()&&sectorMist[index].liquid&&!sectorMist[index].thick)continue; // Back into the water.
+        if(z<floor&&index<sectorMist.size()&&sectorMist[index].liquid){
+            if(settings.environmentEffects&&settings.debrisLiquids){
+                if(!p.liquidHit){debrisLiquidSplash(x,y,floor,int(index),p.size);p.liquidHit=true;}
+                if(p.size>1.2f)continue; // Heavy rubble sinks; small flecks linger.
+            }else if(!sectorMist[index].thick)continue;
+        }
         z=std::min(z,ceilZ(sector)-p.size*0.5f);
         float size=t>p.life*0.75f?p.size*0.5f:p.size,tall=std::abs(p.vz-420*t)>220?2.0f:1.0f;
         std::array<float,3> lit;for(int c=0;c<3;++c)lit[c]=std::min(1.0f,p.color[c]*p.light);
@@ -287,7 +316,7 @@ float valueNoise(float x,float y,float cell,uint32_t seed) {
     float top=a+(b-a)*fx,bottom=c+(d-c)*fx;
     return top+(bottom-top)*fy;
 }
-void impactsShutdown() {fluidParticles.clear();fluidBursts.clear();fluidMarks.clear();wallDecals.clear();flatDecals.clear();debris.clear();scorches.clear();impactParticles.clear();gunPuffs.clear();}
+void impactsShutdown() {resetEnvironment();fluidParticles.clear();fluidBursts.clear();fluidMarks.clear();wallDecals.clear();flatDecals.clear();debris.clear();scorches.clear();impactParticles.clear();gunPuffs.clear();}
 } // namespace doom3d
 
 #ifdef DOOM_TEST_DRIVER
@@ -313,20 +342,49 @@ extern "C" void I_TestImpactOptions() {
     for(const auto &mask:fluidMasks){bool clear=false,covered=false;for(int i=0;i<mask.w*mask.h;++i){clear|=mask.alpha[i]==0;covered|=mask.alpha[i]>0;}if(!clear||!covered)I_Error("Fluid mask lost transparency");}
     resetFluidEffects();
     auto saveFluidParticles=fluidParticles;auto saveFluidMarks=fluidMarks;auto saveFluidBursts=fluidBursts;
-    int enabled=settings.fluidWeapons;
+    int enabled=settings.fluidWeapons,rocketFire=settings.fluidRocketFire;
     fluidParticles.clear();fluidMarks.clear();fluidBursts.clear();settings.fluidWeapons=1;
-    for(auto type:{MT_ROCKET,MT_PLASMA,MT_BFG}){
+    for(int style=0;style<2;++style)for(auto type:{MT_ROCKET,MT_PLASMA,MT_BFG}){
+        settings.fluidRocketFire=style;
         mobj_t missile=*players[displayplayer].mo;missile.type=type;missile.target=players[displayplayer].mo;
         missile.flags=MF_MISSILE;missile.momx=20*FRACUNIT;missile.momy=0;missile.momz=8*FRACUNIT;
         missile.z=missile.floorz;missile.info=&mobjinfo[type];
         size_t count=fluidParticles.size();fluidProjectileFlight(missile);
         if(fluidParticles.size()<=count)I_Error("Missing Fluid projectile trail");
+        if(type==MT_ROCKET){
+            int fire=0;for(size_t i=count;i<fluidParticles.size();++i){
+                const auto &p=fluidParticles[i];
+                if(p.mask==13)I_Error("Original default disables flight smoke");
+                if(std::abs(p.halfSize-2.5f/7.f)>.0001f||p.fadeTics!=p.life-1)I_Error("Original rocket particle scale/fade mismatch");
+                if(p.mask==(style?14:15))++fire;
+            }
+            // Soft glow sparks share mask 12; the flare and four trail particles come first.
+            if(fire<5||fire>6)I_Error("Rocket flare/trail style missing");
+            if(missile.z!=missile.floorz||missile.momz!=8*FRACUNIT)I_Error("Rocket fire style changed projectile height or velocity");
+            const auto &trail=fluidParticles[count+1];
+            for(size_t i=count+1;i<count+5;++i){const auto &p=fluidParticles[i];
+                if(p.life!=5||p.size!=25||p.growth!=-5||p.color!=trail.color)I_Error("Rocket differs from original Fluid trail timing/color");}
+
+        }
         size_t marks=fluidMarks.size();fluidProjectileImpact(&missile);
         if(fluidBursts.empty())I_Error("Missing Fluid projectile impact");
         if(missile.subsector->sector->floorpic!=skyflatnum&&fluidMarks.size()<=marks)I_Error("Missing Fluid projectile scorch");
     }
     for(int i=0;i<80;++i)tickFluidEffects();
     if(!fluidParticles.empty()||!fluidBursts.empty())I_Error("Fluid projectile effects failed to expire");
+    fluidParticles.clear();fluidBursts.clear();
+    fluidRocketLaunch(players[displayplayer].mo);
+    if(!fluidParticles.empty())I_Error("Non-original muzzle trail returned");
+    fluidBursts.push_back({0,0,0,MT_ROCKET,0});
+    tickFluidEffects();tickFluidEffects();
+    int smoke=0,sparks=0;
+    for(const auto &p:fluidParticles){
+        if(!p.add){++smoke;if(p.color[0]!=30/255.f||p.life<20||p.life>30||p.growth<4.4f||p.growth>5)I_Error("Original impact smoke parameters differ");}
+        if(p.fadeTics<0){++sparks;if(!p.add||p.growth>=0||p.life<36||p.life>39)I_Error("Original shrinking impact sparks differ");}
+    }
+    if(smoke!=2||sparks<30||sparks>40)I_Error("Original impact emission cadence differs");
+    fluidParticles.clear();fluidBursts.clear();
+    puts("PASS original rocket sizing, fade, shrinking sparks, smoke cadence and no extra muzzle trail");
     // Exercise a real map corner: the next face must share the same UV origin.
     bool wrapped=false;
     for(int i=0;i<numlines&&!wrapped;++i)for(int side=0;side<2&&!wrapped;++side)for(int part=0;part<3&&!wrapped;++part){
@@ -342,18 +400,50 @@ extern "C" void I_TestImpactOptions() {
     tickFluidEffects();tickFluidEffects();
     if(fluidParticles.size()>10)I_Error("Plasma impact emitted lightning instead of sparks");
     settings.fluidWeapons=0;tickFluidEffects();if(!fluidMarks.empty())I_Error("Disabled Fluid effects left decals");
-    settings.fluidWeapons=enabled;
+    settings.fluidWeapons=enabled;settings.fluidRocketFire=rocketFire;
     fluidParticles=std::move(saveFluidParticles);fluidMarks=std::move(saveFluidMarks);fluidBursts=std::move(saveFluidBursts);
     puts("Fluid rocket/plasma/BFG trails, impacts, scorches, expiry and toggle passed.");
     int optionCount=0;
     Settings config;
+      for(const char *key:{"material_rubble","progressive_glass","hidden_machinery","adjacent_reverb","blood_spray","live_readouts","worn_plates","window_streaks"}) {
+          int count=0;
+          for(auto &tab:optionTabs(config))for(auto &section:tab.sections)for(auto &option:section.options)
+              if(!strcmp(option.key,key))++count;
+          if(count!=1)I_Error("Missing or duplicate integrated option: %s",key);
+      }
+      readOption(config,"material_rubble",0);readOption(config,"progressive_glass",0);
+      readOption(config,"hidden_machinery",0);readOption(config,"adjacent_reverb",0);
+      if(config.materialRubble||config.progressiveGlass||config.hiddenMachinery||config.adjacentReverb)
+          I_Error("Integrated feature toggles did not turn off");
+      readOption(config,"material_rubble",1);readOption(config,"progressive_glass",1);
+      readOption(config,"hidden_machinery",1);readOption(config,"adjacent_reverb",1);
+      if(!config.materialRubble||!config.progressiveGlass||!config.hiddenMachinery||!config.adjacentReverb)
+          I_Error("Integrated feature toggles did not turn on");
+      int colorMode=settings.materialRubble;bool colored=false;
+      for(int i=0;i<numlines&&!colored;++i)for(int part=0;part<3&&!colored;++part) {
+          WallSpan span;if(!wallSpan(lines[i],0,part,span)||span.texture<=0)continue;
+          float x=(span.a.x+span.b.x)*.5f,y=(span.a.y+span.b.y)*.5f,z=(span.bottom+span.top)*.5f;
+          settings.materialRubble=1;auto tint=rubbleSurfaceColor(x,y,z);
+          if(tint[0]-tint[2]<.15f)continue;
+          settings.materialRubble=0;auto grey=rubbleSurfaceColor(x,y,z);
+          if(grey!=std::array<float,3>{1,1,1})I_Error("Rubble color toggle did not restore grey");
+          settings.materialRubble=1;
+          if(tint!=rubbleSurfaceColor(x,y,z))I_Error("Rubble color changed when re-enabled");
+          printf("PASS warm wall rubble tint %.3f %.3f %.3f and grey fallback\n",tint[0],tint[1],tint[2]);colored=true;
+      }
+      settings.materialRubble=colorMode;
+      if(!colored)I_Error("Warm wall material not sampled in test map");
+    readOption(config,"fluid_rocket_fire",0);
+    if(config.fluidRocketFire!=0)I_Error("Soft rocket fire option not loaded");
+    readOption(config,"fluid_rocket_fire",1);
+    if(config.fluidRocketFire!=1)I_Error("Grainy rocket fire option not loaded");
     for(auto &tab:optionTabs(config))for(auto &section:tab.sections)for(auto &option:section.options)
         if(!strcmp(option.key,"door_sparks")||
            !strcmp(option.key,"gun_impacts")) {
-            if(strcmp(tab.title,"Effects"))I_Error("Impact/door option is outside Effects tab");
+            if(strcmp(tab.title,!strcmp(option.key,"gun_impacts")?"Combat":"Destruction"))I_Error("Impact/door option is in the wrong category");
             ++optionCount;
         }
-    if(optionCount!=2)I_Error("Missing/duplicate Effects options");
+    if(optionCount!=2)I_Error("Missing/duplicate Destruction options");
     readOption(config,"gun_impacts",0);
     if(config.gunImpacts)I_Error("Impact config keys not loaded");
     dropOldLevelImpacts();
@@ -404,7 +494,7 @@ extern "C" void I_TestImpactOptions() {
     debris=std::move(savedDebris);wallDecals=std::move(savedWalls);scorches=std::move(savedScorches);
     settings.gunImpacts=gun;settings.shootableLights=lights;impactRandom=random;
     {
-        auto saved=std::move(rubbleParticles);auto savedChunks=std::move(debris);
+        auto saved=std::move(rubbleParticles);auto savedChunks=std::move(debris);auto savedVoxels=std::move(impactParticles);int chunks=settings.rocketChunks;settings.rocketChunks=1;
         for(int type:{MT_ROCKET,MT_BFG,MT_PLASMA,MT_TROOPSHOT,MT_HEADSHOT,MT_BRUISERSHOT,MT_FATSHOT,MT_ARACHPLAZ,MT_TRACER}){
             rubbleParticles.clear();rubbleImpact(type,0,0,0,0,0,1);
             if(rubbleParticles.empty())I_Error("Missing rubble projectile profile");
@@ -414,7 +504,19 @@ extern "C" void I_TestImpactOptions() {
         }
         for(int i=0;i<100;++i)rubbleImpact(MT_BFG,0,0,0,0,0,1);
         if(rubbleParticles.size()!=192)I_Error("Rubble particle cap failed");
+        impactParticles.clear();
+        auto *player=players[displayplayer].mo;float cx=units(player->x),cy=units(player->y),cz=units(player->z)+24;
+        auto expected=rubbleSurfaceColor(cx,cy,cz);
+        for(int i=0;i<12;++i)rubbleImpact(MT_ROCKET,cx,cy,cz,0,0,1);
+        if(impactParticles.size()!=48)I_Error("Rocket chunk budget failed");
+        for(const auto &p:impactParticles)if(p.kind!=4||p.color!=expected||p.size<3.5f||p.size>7)I_Error("Rocket chunk material or size failed");
+        auto before=impactParticles.front();moveImpactParticle(impactParticles.front(),1.f/TICRATE);
+        if(impactParticles.front().z==before.z)I_Error("Rocket chunk did not move");
+        settings.rocketChunks=0;tickImpactParticles();
+        if(!impactParticles.empty())I_Error("Rocket chunks toggle did not clear particles");
+        impactParticles=std::move(savedVoxels);settings.rocketChunks=chunks;
         rubbleParticles=std::move(saved);debris=std::move(savedChunks);
+        puts("PASS rocket voxel chunk material, cap, movement and toggle");
         puts("PASS rubble projectile profiles, expiration and shared 192 particle cap");
     }
     {

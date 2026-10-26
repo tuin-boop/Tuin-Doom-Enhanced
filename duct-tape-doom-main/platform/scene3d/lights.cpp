@@ -36,16 +36,14 @@ static std::array<float,3> frameGlow(int sprite,int frame) {
 void muzzleFlash(mobj_t *source,int weapon,int projectile) {
     if(!source||gamestate!=GS_LEVEL) return;
     if(flashLevelSerial!=r_levelserial) {flashPulses.clear();flashLevelSerial=r_levelserial;}
-    float radius=384,strength=1.9f;
-    if(weapon==wp_shotgun||weapon==wp_supershotgun) {radius=448;strength=2.4f;}
-    else if(weapon==wp_missile||weapon==wp_bfg) {radius=480;strength=2.6f;}
-    else if(weapon==wp_plasma) {radius=320;strength=1.6f;}
+    float radius=384,strength=1.9f;int flashState=-1;
+    Game_MuzzleFlash(weapon,&radius,&strength,&flashState);
     float z=source->player?units(source->player->viewz)-8:units(source->z)+units(source->height)*0.65f;
     int sprite=source->sprite,frame=source->frame;
     if(projectile>=0&&projectile<NUMMOBJTYPES) {
         const auto &state=states[mobjinfo[projectile].spawnstate];sprite=state.sprite;frame=state.frame;
-    } else if(source->player&&weapon>=0&&weapon<NUMWEAPONS) {
-        const auto &state=states[weaponinfo[weapon].flashstate];sprite=state.sprite;frame=state.frame;
+    } else if(source->player&&flashState>=0) {
+        const auto &state=states[flashState];sprite=state.sprite;frame=state.frame;
     }
     FlashPulse pulse={units(source->x),units(source->y),z,radius,strength,leveltime,source,frameGlow(sprite,frame)};
     for(auto &old:flashPulses) if(old.source==source) {old=pulse;return;}
@@ -158,19 +156,18 @@ static void doorSpill(const Uniforms &camera);
 // a floor scorch, once per barrel.
 static std::unordered_map<const mobj_t*,bool> burstBarrels;
 static float barrelLight(const mobj_t &thing) {
-    if(thing.type!=MT_BARREL||!thing.state)return 0;
-    int state=int(thing.state-states);
-    if(state<S_BEXP||state>S_BEXP5)return 0;
-    static const float curve[]={0.7f,1.2f,1.8f,2.8f,1.5f};
-    float strength=curve[state-S_BEXP];
-    if(state==S_BEXP5)strength*=std::clamp(thing.tics/10.0f,0.0f,1.0f);
+    int frame=Game_BlastFrame(&thing);
+    if(frame<0)return 0;
+    static const float curve[GAME_BLAST_FRAMES]={0.7f,1.2f,1.8f,2.8f,1.5f};
+    float strength=curve[frame];
+    if(frame==GAME_BLAST_FRAMES-1)strength*=std::clamp(thing.tics/10.0f,0.0f,1.0f);
     return strength;
 }
 // Teleport fog (and the item respawn fog): a burst that peaks as it appears
 // and fades over the rest of its frames, timed from the state chain so
 // DEHACKED changes keep it in step. 0 for every other thing.
 static float teleportLight(const mobj_t &thing) {
-    if((thing.type!=MT_TFOG&&thing.type!=MT_IFOG)||!thing.state)return 0;
+    if(Game_ThingRole(thing.type)!=GAME_THING_TELEPORT_FOG||!thing.state)return 0;
     int total=0,elapsed=-1,current=int(thing.state-states);
     for(int state=thing.info->spawnstate,n=0;state!=S_NULL&&n<32;state=states[state].nextstate,++n) {
         if(state==current)elapsed=total+std::max(0,(int)(states[state].tics-thing.tics));
@@ -182,11 +179,13 @@ static float teleportLight(const mobj_t &thing) {
 }
 // Decoration lights: things whose spawn frame is fullbright by design
 // (torches, candles, lamps, burning barrels), recognized from thing data
-// rather than names. Monsters, shots, pickups and short-lived fogs and puffs
-// are excluded. Animated flames flicker like DOOM's fire-flicker sectors:
+// rather than names, and those the game names (Game_DecorationLight:
+// Heretic's chandeliers and serpent torches). Monsters, shots, pickups and
+// short-lived fogs and puffs are excluded. Animated flames flicker like DOOM's fire-flicker sectors:
 // a stepped drop every 4 tics, from a hash rather than the game's RNG.
 bool decorationLight(const mobj_t &thing) {
     if(thing.player||(thing.flags&(MF_MISSILE|MF_COUNTKILL|MF_SPECIAL|MF_NOBLOCKMAP)))return false;
+    if(Game_DecorationLight(thing.sprite))return true;
     const state_t &spawn=states[thing.info->spawnstate];
     return (spawn.frame&FF_FULLBRIGHT)&&(thing.frame&FF_FULLBRIGHT);
 }
@@ -219,18 +218,44 @@ float groupFlicker(int group) {
     return 1-0.12f*(hash&3);
 }
 // A decoration's unflickered light, shared by the dynamic set and the bake.
-// Size follows the artwork: a candle glows small, a tall torch wide.
+// Size follows the artwork: a candle glows small, a tall torch wide. It
+// shines near the top, or, for art that isn't fullbright, from where its
+// flames are painted (a chandelier's candles sit low under the chain).
 BakeLight decorationSource(const mobj_t &thing) {
     const auto &frame=sprites[thing.sprite].spriteframes[thing.frame&FF_FRAMEMASK];
-    float height=(float)lumpImage(firstspritelump+frame.lump[0],false).height;
+    const Image &image=lumpImage(firstspritelump+frame.lump[0],false);
+    float height=(float)image.height,up=Game_DecorationLight(thing.sprite)?image.glowHeight:0.85f;
     auto color=frameGlow(thing.sprite,thing.frame);
-    return {units(thing.x),units(thing.y),units(thing.z)+height*0.85f,std::clamp(height*4.0f,96.0f,320.0f),
+    return {units(thing.x),units(thing.y),units(thing.z)+height*up,std::clamp(height*4.0f,96.0f,320.0f),
             std::clamp(height/60.0f,0.6f,1.2f),0.75f,{color[0],color[1],color[2]}};
 }
 std::vector<StaticFog> staticFog;
+// The carried torch's color: the glow of the game's torch item sprite
+// (Game_Sprite), paled halfway to white like firelight on stone, or a
+// candle's warm white.
+std::array<float,3> torchColor() {
+    int sprite=Game_Sprite(GAME_SPRITE_TORCH);
+    if(sprite<0)return {1.0f,0.75f,0.45f};
+    auto glow=frameGlow(sprite,0);
+    for(float &c:glow)c=0.5f+0.5f*c;
+    return glow;
+}
 void collectFlashes(float fraction,const Uniforms &camera) {
     updateBlockerCache();
     flashes={};lightBlockers.clear();fogOnly={};lightKind=I_RENDER3D_LIGHT_FLASHLIGHT;
+    // A carried torch (Game_Torch): a flame held low at the left hand,
+    // lighting all around like the torches on the walls, flickering with
+    // the game's own torch and a fine stepped flicker of its own. Things
+    // throw shadows from it (decoration kind, not the flashlight's).
+    float flame;
+    if(Game_Torch(&flame)&&flame>0) {
+        float at[3];
+        for(int c=0;c<3;++c)at[c]=camera.eye[c]-camera.right[c]*12-camera.up[c]*10+camera.forward[c]*8;
+        uint32_t hash=(uint32_t)(leveltime/3)*2654435761u;hash^=hash>>13;hash*=0x5bd1e995u;hash^=hash>>15;
+        lightKind=I_RENDER3D_LIGHT_DECORATION;
+        appendLight(at[0],at[1],at[2],640,1.0f*(0.7f+0.3f*flame)*(1-0.06f*(hash&3)),torchColor(),nullptr,0.75f);
+        lightKind=I_RENDER3D_LIGHT_FLASHLIGHT;
+    }
     // The flashlight rides at the right shoulder, a little below, right of and
     // behind the eye like Doom 3's, aimed to meet the view 256 units ahead.
     // High up it lights the floor ahead from above rather than skimming it,
@@ -307,7 +332,7 @@ void collectFlashes(float fraction,const Uniforms &camera) {
             barrels.push_back({thing,dx*dx+dy*dy+dz*dz});
             auto seen=burstBarrels.find(thing);
             if(seen!=burstBarrels.end())seen->second=true;
-            else if(thing->state-states>=S_BEXP4) {burstBarrels[thing]=true;barrelBlast(*thing,x,y,z);}
+            else if(Game_BlastFrame(thing)>=GAME_BLAST_BURST) {burstBarrels[thing]=true;barrelBlast(*thing,x,y,z);}
             continue;
         }
         if(teleportLight(*thing)>0) {
@@ -328,6 +353,7 @@ void collectFlashes(float fraction,const Uniforms &camera) {
             continue;
         }
         if(!(thing->info->flags&MF_MISSILE)||!(thing->frame&FF_FULLBRIGHT)) continue;
+        if(liquidProjectileHidden(thing))continue;
         float x,y,z;interpolatedPosition(*thing,fraction,x,y,z);
         float dx=x-camera.eye[0],dy=y-camera.eye[1],dz=z-camera.eye[2];
         projectiles.push_back({thing,dx*dx+dy*dy+dz*dz});
@@ -386,14 +412,33 @@ void collectFlashes(float fraction,const Uniforms &camera) {
     }
     std::sort(projectiles.begin(),projectiles.end(),[](const Candidate &a,const Candidate &b) {return a.distance<b.distance;});
     lightKind=I_RENDER3D_LIGHT_PROJECTILE;
-    for(size_t n=0;n<std::min(size_t(8),projectiles.size());++n) {
-        const mobj_t &thing=*projectiles[n].thing;
-        float x,y,z;interpolatedPosition(thing,fraction,x,y,z);
+    // Swarms (Heretic's teleport glitter, claw rippers, crossbow volleys,
+    // flame trails) would stack a full light per spark and wash surfaces
+    // out: shots within 96 units of a nearer one join its light, which
+    // grows by a fifth per member up to half again as strong. Sparks
+    // smaller than DOOM's plasma ball (13 pixels) shine by their area.
+    struct Cluster {const mobj_t *thing;float x,y,z,radius,strength;int members;};
+    std::vector<Cluster> clusters;
+    for(const Candidate &candidate:projectiles) {
+        const mobj_t &thing=*candidate.thing;
+        float x,y,z;interpolatedPosition(thing,fraction,x,y,z);z+=units(thing.height)*0.5f;
         float radius=256,strength=1.7f;
-        if(thing.type==MT_BFG) {radius=448;strength=2.4f;}
-        else if(thing.type==MT_ROCKET) {radius=288;strength=1.5f;}
-        appendLight(x,y,z+units(thing.height)*0.5f,radius,strength,frameGlow(thing.sprite,thing.frame),&thing,0.75f);
+        game_thing_role role=Game_ThingRole(thing.type);
+        if(role==GAME_THING_BIG_SHOT) {radius=448;strength=2.4f;}
+        else if(role==GAME_THING_ROCKET) {radius=288;strength=1.5f;}
+        const spritedef_t &sprite=sprites[thing.sprite];
+        if((thing.frame&FF_FRAMEMASK)<sprite.numframes) {
+            const Image &image=lumpImage(firstspritelump+sprite.spriteframes[thing.frame&FF_FRAMEMASK].lump[0],false);
+            strength*=std::clamp(image.width*image.height/169.0f,0.25f,1.0f);
+        }
+        auto joined=std::find_if(clusters.begin(),clusters.end(),[&](const Cluster &c) {
+            return std::fabs(c.x-x)<96&&std::fabs(c.y-y)<96&&std::fabs(c.z-z)<96;});
+        if(joined!=clusters.end()) {
+            joined->radius=std::max(joined->radius,radius);joined->strength=std::max(joined->strength,strength);++joined->members;
+        } else if(clusters.size()<8) clusters.push_back({&thing,x,y,z,radius,strength,1});
     }
+    for(const Cluster &c:clusters)
+        appendLight(c.x,c.y,c.z,c.radius,c.strength*std::min(1.5f,1+0.2f*(c.members-1)),frameGlow(c.thing->sprite,c.thing->frame),c.thing,0.75f);
     // Teleport flashes share the projectiles' light kind; the nearest four.
     std::sort(teleports.begin(),teleports.end(),[](const Candidate &a,const Candidate &b) {return a.distance<b.distance;});
     for(size_t n=0;n<std::min(size_t(4),teleports.size());++n) {

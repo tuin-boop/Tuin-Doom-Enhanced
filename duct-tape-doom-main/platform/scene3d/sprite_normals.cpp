@@ -35,9 +35,9 @@ static void blurOpaque(std::vector<float> &height,const std::vector<char> &opaqu
 // covers it and rises as a round tube of that radius: the torso a broad
 // cylinder, arms, legs and guns thin tubes of their own, rather than one
 // distance field whose ridges bulge at shoulders, elbows and the gun. A
-// mostly vertical blur and a weaker vertical tilt keep the body an upright
-// cylinder. Packed as unsigned x/y (texture down) for the sprite's B/A.
-std::vector<byte> spriteNormals(int w,int h,const byte *pixels) {
+// mostly vertical blur keeps the body an upright cylinder. True depth, in
+// texels (0 where empty); the ragdoll's relief (ragdoll_body.cpp) stands on it.
+std::vector<float> spriteTubeHeights(int w,int h,const byte *pixels) {
     // Distance to the nearest transparent pixel; outside the frame counts.
     int pw=w+2,ph=h+2,longest=std::max(pw,ph);
     std::vector<float> grid((size_t)pw*ph,0),line(longest),out(longest),z(longest+1);
@@ -74,20 +74,27 @@ std::vector<byte> spriteNormals(int w,int h,const byte *pixels) {
             float &t=thickness[(size_t)ny*w+nx];t=std::max(t,d);
         }
     }
-    // A round cross-section, deepened: under a light from the view a true
-    // cylinder stays bright almost to its outline and reads flat again.
-    // Distances run between pixel centers; the outline lies half a pixel out.
+    // A round cross-section. Distances run between pixel centers; the outline lies half a pixel out.
     std::vector<float> height((size_t)w*h,0);
     for(size_t i=0;i<height.size();++i)if(opaque[i]) {
         float e=distance[i]-0.5f,r=thickness[i]-0.5f;
-        height[i]=1.75f*std::sqrt(std::max(0.0f,e*(2*r-e)));
+        height[i]=std::sqrt(std::max(0.0f,e*(2*r-e)));
     }
     blurOpaque(height,opaque,w,h,1,0,1.2f); // softens the tubes' center crease
     blurOpaque(height,opaque,w,h,0,1,std::clamp(h*0.04f,1.5f,4.0f));
+    return height;
+}
+// The tubes as normals, deepened: under a light from the view a true
+// cylinder stays bright almost to its outline and reads flat again. A weaker
+// vertical tilt keeps the body upright. Packed as unsigned x/y (texture
+// down) for the sprite's B/A.
+std::vector<byte> spriteNormals(int w,int h,const byte *pixels) {
+    std::vector<float> height=spriteTubeHeights(w,h,pixels);
+    for(float &v:height)v*=1.75f;
     auto at=[&](int x,int y){return x<0||y<0||x>=w||y>=h?0.0f:height[(size_t)y*w+x];};
     std::vector<byte> normals((size_t)w*h*2,128);
     for(int y=0;y<h;++y)for(int x=0;x<w;++x) {
-        if(!opaque[(size_t)y*w+x])continue;
+        if(!pixels[((size_t)y*w+x)*2+1])continue;
         float nx=-(at(x+1,y)-at(x-1,y))*0.5f,ny=-(at(x,y+1)-at(x,y-1))*0.5f*0.6f;
         float length=std::sqrt(nx*nx+ny*ny+1);
         normals[((size_t)y*w+x)*2]=(byte)std::lround((nx/length*0.5f+0.5f)*255);

@@ -586,3 +586,6 @@ void P_GlobalDigLoad(const unsigned char *data,int length){
         memcpy(cutProfile,data+offset+4,count);memcpy(flatProfile,data+offset+4+count,flatCount);
     }
 }
+
+
+

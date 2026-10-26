@@ -121,13 +121,20 @@ Image upload(int w,int h,const byte *pixels,int left,int top,const byte *mask,co
     return image;
 }
 // Screen glass heights, or empty when the texture has no screens; frame
-// receives where each glass pixel sits on its screen (doom_screen_glass).
+// receives where each glass pixel sits on its screen (doom_screen_glass),
+// and each readout texel where it sits on its readout (doom_screen_readouts;
+// empty when there are neither). Switches keep their lamps still, so the
+// lit state stays plain.
 static std::vector<byte> screenGlass(const char *name,bool flat,int w,int h,const byte *pixels,std::vector<byte> &frame) {
     frame.clear();
-    if(!doom_screen_texture(name,flat))return {};
+    if(!Game_ScreenTexture(name,flat))return {};
     const byte *palette=(const byte*)W_CacheLumpName((char*)"PLAYPAL",PU_CACHE);
     std::vector<byte> glass((size_t)w*h);frame.assign((size_t)w*h*4,0);
-    if(!doom_screen_glass(w,h,pixels,palette,glass.data(),frame.data())) {frame.clear();return {};}
+    int screens=doom_screen_glass(w,h,pixels,palette,glass.data(),frame.data());
+    bool switches=!strncmp(name,"SW1",3)||!strncmp(name,"SW2",3);
+    int readouts=switches?0:doom_screen_readouts(w,h,pixels,palette,glass.data(),frame.data());
+    if(!readouts&&!screens)frame.clear();
+    if(!screens)return {};
     return glass;
 }
 // Uploads the screen frame beside the image the shader refracts through it.
@@ -150,7 +157,9 @@ static Image &withGlassFrame(Image &image,const std::vector<byte> &frame) {
 // 16 bits with the anchor offset in alpha (noPaintedTile: none), the other
 // channels as at 8 bits.
 using Tiler=std::vector<uint16_t>(*)(const std::vector<float> &,int,int);
-static Image &withRelief(Image &image,Tiler tiles=nullptr) {
+// depth scales the broad bands (seams, streaks); smooth leaves no grain
+// (glassy highlights) and halves the per-texel tilt.
+static Image &withRelief(Image &image,Tiler tiles=nullptr,float depth=1,bool smooth=false) {
     int w=image.width,h=image.height;size_t count=(size_t)w*h;
     const byte *palette=(const byte*)W_CacheLumpName((char*)"PLAYPAL",PU_CACHE);
     std::vector<float> height(count),across(count),down(count),broad(count),grain(count),rough(count),scratch(count);
@@ -198,12 +207,13 @@ static Image &withRelief(Image &image,Tiler tiles=nullptr) {
         float fy=(at(height,x-1,y+1)+2*at(height,x,y+1)+at(height,x+1,y+1)-at(height,x-1,y-1)-2*at(height,x,y-1)-at(height,x+1,y-1))*0.25f;
         float t=std::clamp((bands[(size_t)y*w+x]-2*typical)/(2*typical+1e-6f),0.0f,1.0f);
         float deepen=1+(gain-1)*t*t*(3-2*t);
-        float sx=0.25f*fx+1.5f*deepen*(at(across,x+1,y)-at(across,x-1,y));
-        float sy=0.25f*fy+1.5f*deepen*(at(down,x,y+1)-at(down,x,y-1));
+        float fine=smooth?0.125f:0.25f;
+        float sx=fine*fx+1.5f*deepen*depth*(at(across,x+1,y)-at(across,x-1,y));
+        float sy=fine*fy+1.5f*deepen*depth*(at(down,x,y+1)-at(down,x,y-1));
         float soften=1/(1+std::sqrt(sx*sx+sy*sy)); // Steep edges ease toward 45 degrees.
         byte *cell=&cells[((size_t)y*w+x)*4];
         cell[0]=(byte)std::lround(128+127*sx*soften);cell[1]=(byte)std::lround(128+127*sy*soften);
-        cell[2]=(byte)std::lround(std::clamp(rough[(size_t)y*w+x]/0.25f,0.0f,1.0f)*255);cell[3]=255;
+        cell[2]=smooth?0:(byte)std::lround(std::clamp(rough[(size_t)y*w+x]/0.25f,0.0f,1.0f)*255);cell[3]=255;
     }
     std::vector<uint16_t> anchors=tiles?tiles(height,w,h):std::vector<uint16_t>();
     if(std::any_of(anchors.begin(),anchors.end(),[](uint16_t a){return a!=noPaintedTile;})) {
@@ -217,13 +227,56 @@ static Image &withRelief(Image &image,Tiler tiles=nullptr) {
     if(!image.relief)I_Error((char*)"Could not allocate a GPU texture");
     return image;
 }
+// Leaded stained glass (Image::leaded): its relief in place of withRelief's.
+// The glowing panes are the shards, split by the dark lead between them
+// (4-connected groups of glowing texels): each shard is flat glass leaning a
+// little its own way, by a hash of its first texel, so a light glints off
+// some shards and not their neighbors. The lead is a groove: its texels
+// slope down from the panes on either side, so its edges catch the light.
+// RGBA8 as withRelief's (no tiles); B (grain) 0: glass is smooth.
+static Image &withLeadedRelief(Image &image) {
+    int w=image.width,h=image.height;size_t count=(size_t)w*h;
+    const std::vector<byte> &mask=image.emission;
+    std::vector<int> shard(count,-1);std::vector<size_t> stack;
+    auto pane=[&](int x,int y){x=(x%w+w)%w;y=(y%h+h)%h;return !mask.empty()&&mask[(size_t)y*w+x]>0;};
+    for(size_t start=0;start<count;++start) {
+        if(shard[start]>=0||mask.empty()||!mask[start])continue;
+        shard[start]=(int)start;stack.assign(1,start);
+        while(!stack.empty()) {
+            size_t i=stack.back();stack.pop_back();int x=(int)(i%w),y=(int)(i/w);
+            const int steps[4][2]={{1,0},{-1,0},{0,1},{0,-1}};
+            for(const auto &s:steps) {
+                int nx=x+s[0],ny=y+s[1];if(nx<0||ny<0||nx>=w||ny>=h)continue;
+                size_t j=(size_t)ny*w+nx;
+                if(shard[j]<0&&mask[j]) {shard[j]=(int)start;stack.push_back(j);}
+            }
+        }
+    }
+    std::vector<byte> cells(count*4);
+    for(int y=0;y<h;++y)for(int x=0;x<w;++x) {
+        size_t i=(size_t)y*w+x;float sx=0,sy=0;
+        if(shard[i]>=0) {
+            uint32_t hash=(uint32_t)shard[i]*2654435761u;hash^=hash>>13;hash*=0x5bd1e995u;hash^=hash>>15;
+            sx=((hash&1023)/1023.0f*2-1)*0.18f;sy=(((hash>>10)&1023)/1023.0f*2-1)*0.18f;
+        } else {
+            // Down from the panes: the slope points away from them.
+            sx=0.45f*((float)pane(x-1,y)-(float)pane(x+1,y));sy=0.45f*((float)pane(x,y-1)-(float)pane(x,y+1));
+        }
+        byte *cell=&cells[i*4];
+        cell[0]=(byte)std::lround(128+127*std::clamp(sx,-1.0f,1.0f));cell[1]=(byte)std::lround(128+127*std::clamp(sy,-1.0f,1.0f));
+        cell[2]=0;cell[3]=255;
+    }
+    image.relief=gpuCreateTexture(GpuFormat::RGBA8,w,h,cells.data(),w*4);
+    if(!image.relief)I_Error((char*)"Could not allocate a GPU texture");
+    return image;
+}
 // Masks live beside graphics.cfg, or in the directory selected by -emissive.
 static std::vector<byte> emissionMask(const char *name,bool flat,int w,int h,const byte *pixels) {
     std::vector<byte> mask((size_t)w*h,0);
     int paletteLump=W_GetNumForName((char*)"PLAYPAL");
     if(W_LumpLength(paletteLump)<768) I_Error((char*)"Invalid emissive palette");
     const byte *palette=(const byte*)W_CacheLumpNum(paletteLump,PU_CACHE);
-    int kind=doom_emissive_kind(name,flat);
+    int kind=Game_GlowKind(name,flat);
     for(size_t i=0;i<mask.size();++i)
         mask[i]=doom_emissive_pixel(kind,palette+pixels[2*i]*3,pixels[2*i+1]);
     if(!flat && doom_switch_texture(name)) {
@@ -283,10 +336,14 @@ static bool livingMonsterLump(int lump) {
 // screens) light their rooms. Computer and tech walls merely dotted with
 // LEDs (TEKWALL*, COMPTALL, COMPWERD: under 0.6% glows) keep their glowing
 // artwork but light only as much as those LEDs; with the floor E1M2's
-// TEKWALL4 room went red from its few red LEDs.
+// TEKWALL4 room went red from its few red LEDs. Stained glass glows over
+// most of its area but is a window, not a lamp: it lights the room softly,
+// most of its color reaching the floor as projected light (glass_light.cpp).
 static Image &speckledPanel(Image &image,const char *name,bool flat) {
-    if(image.emissionCoverage>0&&image.emissionCoverage<0.006f&&doom_emissive_kind(name,flat)==DOOM_EMISSIVE_PANEL)
+    int kind=Game_GlowKind(name,flat);
+    if(image.emissionCoverage>0&&image.emissionCoverage<0.006f&&kind==DOOM_EMISSIVE_PANEL)
         image.emissionWeight=image.emissionCoverage*8.0f;
+    if(kind==DOOM_EMISSIVE_GLASS) {image.emissionWeight*=0.2f;image.leaded=!image.emission.empty();}
     return image;
 }
 /* Texture keys: wall index >=0, WAD lump = -1-lump. */
@@ -306,6 +363,7 @@ Image &wallImage(int index) {
     Image &image=speckledPanel(images.emplace(index,upload(w,h,pixels.data(),0,0,glowing?mask.data():nullptr,nullptr,
         glass.empty()?nullptr:glass.data(),true)).first->second,name,false);
     image.switchIndicator=doom_switch_texture(name);
+    if(image.leaded)return withLeadedRelief(withGlassFrame(image,frame));
     return withRelief(withGlassFrame(image,frame),image.opaque&&!animated?wallTiles:nullptr);
 }
 Image &lumpImage(int lump,bool flat) {
@@ -323,6 +381,10 @@ Image &lumpImage(int lump,bool flat) {
         std::vector<byte> frame;auto glass=screenGlass(name,true,64,64,pixels.data(),frame);
         // Animated flats (liquids, lights) change their tiles every frame.
         int next;bool animated=P_PicAnimationNext(false,lump-firstflat,&next)>0;
+        // Ice: its painted streaks cut grooves twice as deep, in a smooth,
+        // glassy surface; no crooked tiles.
+        if(Game_IceFlat(name))
+            return withRelief(images.emplace(key,upload(64,64,pixels.data(),0,0,nullptr,nullptr,nullptr,true)).first->second,nullptr,2.0f,true);
         Image &result=withRelief(withGlassFrame(speckledPanel(images.emplace(key,upload(64,64,pixels.data(),0,0,glowing?mask.data():nullptr,nullptr,
             glass.empty()?nullptr:glass.data(),true)).first->second,name,true),frame),animated?nullptr:flatTiles);
         int kind=doom_emissive_kind(name,true);
@@ -363,6 +425,7 @@ Image &lumpImage(int lump,bool flat) {
     }
     Image image=upload(w,h,pixels.data(),SHORT(patch->leftoffset),SHORT(patch->topoffset),nullptr,normals.data());
     image.glowWeight=doom_sprite_glow(pixels.data(),(size_t)w*h,palette,image.glow.data());
+    image.glowHeight=doom_sprite_glow_height(pixels.data(),w,h,palette,image.glow.data());
     return images.emplace(key,std::move(image)).first->second;
 }
 const std::array<float,3> &averageColor(Image &image) {

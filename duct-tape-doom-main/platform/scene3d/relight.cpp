@@ -111,7 +111,7 @@ static void startRelight() {
     for(int *b:{job.lightBounds,job.sunBounds}) {b[0]=b[1]=INT_MAX;b[2]=b[3]=-1;}
     if(job.lights)for(const auto *changed:{&job.gone,&job.kept})for(const BakeLight &light:*changed)
         if(light.strength>0)markRelight(light.x-light.radius,light.y-light.radius,light.x+light.radius,light.y+light.radius,1);
-    const float elevation=40*doomPi/180;
+    const float elevation=sunElevation;
     for(int sector:pending) {
         const BakeSector &s=bakeMap.sectors[sector];
         float x0=1e9f,y0=1e9f,x1=-1e9f,y1=-1e9f,low=s.floor,high=s.ceiling;

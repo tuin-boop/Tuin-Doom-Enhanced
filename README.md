@@ -17,17 +17,13 @@ The Windows launcher includes the engine and the supplied FluidWeapons, FluidWea
 
 ## Latest update
 
-The latest release adds shared solid-volume destruction for walls, doors, floors and ceilings, with excavated geometry used for rendering and movement. It retains the enhanced engine features below. Rockets and barrels excavate surfaces; optional projectile and gun damage add smaller chips and debris. Moving damaged doors retain their holes. Destruction settings include breaches, damage strength and deeper digging.
+The October 26 release adds surface-coloured destruction, refined weapon impacts, liquid splashes, updated menu controls and native VoxelDoom support with environmental lighting and glowing eyes. Load VoxelDoom v2.4 separately through the launcher; it is not bundled. Voxel surface batching reduces geometry without reducing voxel colour detail.
 
-This release includes the latest plasma-impact, homemade-stair and moving-door performance fixes, repaired shallow-crater rims, floating-stain cleanup and restored shootable-glass handling. Small clipped surface fragments have also been corrected.
+Type `johnromerogod` for the optional sticky/drunken rocket cheat. Right-click launches 25 rockets along your aim before they begin wandering; child rockets never multiply. A shaking Doomguy popup and Toasty sound mark the toggle.
 
-The October 21 update reuses unchanged crater geometry on the CPU and GPU, reduces damaged-door processing, and spreads expensive monster route searches across updates. It also fixes glass hit-height checks and makes the new gun-impact effects replace legacy puffs on excavated surfaces. Further performance tuning is ongoing.
+[Full release notes](docs/changes/RELEASE-2026-10-26.md). Older releases remain in [release history](https://github.com/tuin-boop/Tuin-Doom-Enhanced/releases). Existing save/settings folder names are retained.
 
-The latest fracture-effects release adds recessed heat/energy cracks for player and monster projectiles, ground damage beneath grounded projectile victims, shallow-crater leak fixes, and lower moving-lift geometry costs. Standard fresh-profile settings use **250% destruction damage**, with varied deaths, procedural falls, death reactions, face-viewer deaths and FluidMonsters disabled. These options remain available; existing saved settings are preserved.
-
-Earlier releases remain available in [release history](https://github.com/tuin-boop/Tuin-Doom-Enhanced/releases). Save and settings folders retain their previous internal names for compatibility.
-
-Compatible classic/Boom map WADs are supported; arbitrary GZDoom/UDMF maps and general ZScript are not supported. Destruction can bypass keys and map progression. Performance remains dependent on map complexity and accumulated damage.
+Compatible classic/Boom map WADs are supported; arbitrary GZDoom/UDMF maps and general ZScript are not supported. Native voxel models do not implement the pack's scripts or sprite-specific deformation. Destruction can bypass map progression; performance depends on map complexity and accumulated damage.
 
 ## Features added in this version
 

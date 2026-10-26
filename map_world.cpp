@@ -30,7 +30,9 @@ static float cutValue(Vec p,Vec c,float radius,float phase){
  // comes from the saved cut center, so movement and reload remain stable.
  float broad=std::sin((d.x*.8f+d.y*.57f+d.z*.43f)/std::max(4.f,radius)*3.f+phase);
  float fine=std::sin(d.x*.31f+d.z*.27f+phase)*std::cos(d.y*.29f-d.z*.17f-phase);
- float fractured=radius*(.95f+.06f*broad+.04f*fine);
+ // Tiny gun craters need a circular footprint; large blasts retain fracture.
+ float rough=std::clamp((radius-4.f)/8.f,0.f,1.f);
+ float fractured=radius*(1.f+rough*(-.05f+.06f*broad+.04f*fine));
  return length(d)-fractured;
 }
 float MapWorld::cutValue(Vec p,const MapCut& c)const{
@@ -101,7 +103,7 @@ bool MapWorld::affected(Vec p,float radius,float height)const{
  }
  return false;
 }
-void MapWorld::update(TileKey k,WorldTile& tile,bool incremental){
+void MapWorld::update(TileKey k,WorldTile& tile,bool incremental,size_t firstCut){
  // An unchanged base does not need sampling or meshing again on each hit.
  bool fresh=!incremental||tile.volume.density.empty();
  std::vector<float> oldBase,oldDensity;
@@ -113,7 +115,7 @@ void MapWorld::update(TileKey k,WorldTile& tile,bool incremental){
  if(fresh){tile.volume=source.tile(k[0],k[1],k[2],false);tile.edited=false;}
  Volume& next=tile.volume;bool changed=false;
  std::map<std::pair<int,int>,std::vector<signed char>> permissions;
- size_t first=(!fresh&&!cuts.empty())?cuts.size()-1:0;
+ size_t first=(!fresh&&!cuts.empty())?(firstCut==size_t(-1)?cuts.size()-1:std::min(firstCut,cuts.size())):0;
  for(size_t cutIndex=first;cutIndex<cuts.size();++cutIndex){
   const auto& cut=cuts[cutIndex];
   Vec c=center(cut);if(!intersects(k,c,cut.radius*std::max(1.f,cut.stretch)*1.06f+MapSource::step*2))continue;
@@ -225,23 +227,29 @@ bool MapWorld::heights(int sector,float floor,float ceiling){
  }
  return true;
 }
-std::vector<Vec> MapWorld::crumble(int maximum){
+std::vector<Vec> MapWorld::crumble(int maximum,size_t anchorIndex,int totalLimit){
  std::vector<Vec> removed;
  if(cuts.empty()||maximum<1)return removed;
- MapCut anchor=cuts.back();Vec centre=center(anchor);
- float reach=anchor.radius*std::max(1.f,anchor.stretch)*1.06f+MapSource::step*2;
+ if(anchorIndex==size_t(-1))anchorIndex=cuts.size()-1;
+ if(anchorIndex>=cuts.size())return removed;
+ MapCut anchor=cuts[anchorIndex];Vec centre=center(anchor);
+ float reach=std::min(48.f,anchor.radius*std::max(1.f,anchor.stretch)*1.06f+MapSource::step*2);
+ size_t firstRemoval=cuts.size();
  std::set<TileKey> seen,dirty;
  const int edges[7][3]={{1,0,0},{0,1,0},{0,0,1},{1,1,0},{1,0,1},{0,1,1},{1,1,1}};
  auto point=[](TileKey n){return Vec{n[0]*MapSource::step,n[1]*MapSource::step,n[2]*MapSource::step};};
  auto value=[&](TileKey n){
   Vec p=point(n);auto it=cache.find(key(p));
-  // Unloaded space cannot be assumed to be an unsupported fragment.
-  return it==cache.end()?8.f:it->second.volume.field(p);
+  // Resolve uncached neighbours from the saved field, not camera-loaded
+  // mesh tiles. Looking away must not change whether a piece is supported.
+  return it==cache.end()?sample(p):it->second.volume.field(p);
  };
  std::vector<TileKey> seeds;
  for(const auto& entry:cache)if(entry.second.edited&&intersects(entry.first,centre,reach)){
   const auto& v=entry.second.volume;
-  for(int z=0;z<16;++z)for(int y=0;y<16;++y)for(int x=0;x<16;++x)
+  int lo[3],hi[3];float c[3]={centre.x,centre.y,centre.z};
+  for(int a=0;a<3;++a){lo[a]=std::clamp(int(std::floor((c[a]-reach)/MapSource::step))-entry.first[a]*16,0,16);hi[a]=std::clamp(int(std::ceil((c[a]+reach)/MapSource::step))-entry.first[a]*16,0,16);}
+  for(int z=lo[2];z<hi[2];++z)for(int y=lo[1];y<hi[1];++y)for(int x=lo[0];x<hi[0];++x)
    if(v.density[v.index(x,y,z)]>=0){
     // An interior node with more neighbours than the fragment limit cannot
     // belong to a removable component. Avoid expensive map/BFS work for it.
@@ -252,11 +260,12 @@ std::vector<Vec> MapWorld::crumble(int maximum){
     if(v.density[v.index(x,y+1,z)]>=0)++neighbours;
     if(z>0&&v.density[v.index(x,y,z-1)]>=0)++neighbours;
     if(v.density[v.index(x,y,z+1)]>=0)++neighbours;
-    if(neighbours+1>maximum)continue;
+    if(neighbours==6||neighbours+1>maximum)continue;
     seeds.push_back({entry.first[0]*16+x,entry.first[1]*16+y,entry.first[2]*16+z});
    }
  }
  for(auto seed:seeds){
+  if(removed.size()>=size_t(totalLimit))break;
   if(seen.count(seed)||value(seed)<0)continue;
   std::vector<TileKey> component{seed};seen.insert(seed);
   bool attached=false;
@@ -271,7 +280,7 @@ std::vector<Vec> MapWorld::crumble(int maximum){
   }
   if(attached)continue;
   for(auto n:component)if(!source.damageAllowed(point(n),anchor.sector,anchor.plane))attached=true;
-  if(attached||cuts.size()+component.size()>65536)continue;
+  if(attached||cuts.size()+component.size()>65536||removed.size()+component.size()>size_t(totalLimit))continue;
   for(auto n:component){
    Vec p=point(n);
    cuts.push_back({p,1,anchor.sector,anchor.plane,anchor.sector>=0?planes[anchor.sector][anchor.plane]:0});
@@ -280,7 +289,7 @@ std::vector<Vec> MapWorld::crumble(int maximum){
    for(int z=lo[2];z<=hi[2];++z)for(int y=lo[1];y<=hi[1];++y)for(int x=lo[0];x<=hi[0];++x)dirty.insert({x,y,z});
   }
  }
- for(auto k:dirty)update(k,cache[k]);
+ for(auto k:dirty)update(k,cache[k],true,firstRemoval);
  return removed;
 }
 bool MapWorld::ray(Vec start,Vec direction,float range,Hit& hit){

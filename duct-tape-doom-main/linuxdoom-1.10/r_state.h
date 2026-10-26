@@ -119,9 +119,11 @@ extern void (*R_RubbleImpact)(int type,float x,float y,float z,float nx,float ny
 extern void (*R_SolidBulletImpact)(float x,float y,float z,float nx,float ny,float nz);
 extern void (*R_DoorDamage)(line_t *line, int side, fixed_t x, fixed_t y, fixed_t z, int broken);
 extern void (*R_WallImpact)(line_t *line, int side, fixed_t x, fixed_t y, fixed_t z);
-// Renderer-only hitscan blood: x,y,z is the blood spot, dx,dy the shot direction.
+// Renderer-only hitscan blood: x,y,z is the blood spot, dx,dy the shot direction,
+// slope its vertical rise per horizontal unit (to locate the hit on the sprite).
+extern void (*R_BloodHit)(mobj_t *target, mobj_t *shooter, fixed_t x, fixed_t y, fixed_t z, fixed_t dx, fixed_t dy, fixed_t slope, int damage);
+// Every damage event, before it is applied (renderer only: who hit what, with what).
 extern void (*R_DamageHit)(mobj_t *target, mobj_t *inflictor, mobj_t *source, int damage);
-extern void (*R_BloodHit)(mobj_t *target, fixed_t x, fixed_t y, fixed_t z, fixed_t dx, fixed_t dy, int damage, fixed_t slope, const mobj_t *shooter);
 // Renderer-only hitscan floor or ceiling impact (la_freeaim shots); true when
 // the renderer shows it as a splash, so no puff is spawned.
 extern boolean (*R_PlaneImpact)(sector_t *sector, boolean ceiling, fixed_t x, fixed_t y, fixed_t z);

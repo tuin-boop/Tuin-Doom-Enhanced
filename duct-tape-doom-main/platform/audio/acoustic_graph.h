@@ -38,4 +38,6 @@ void Acoustic_Follow(void);
 void Acoustic_Glass(int line, int whole);
 /* Whether window glass is shown at all; without it no pane holds sound back. */
 void Acoustic_ShowGlass(int shown);
+/* Whether a whole pane is shown on line. */
+int Acoustic_GlassWhole(int line);
 #endif

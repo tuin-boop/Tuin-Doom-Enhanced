@@ -35,6 +35,7 @@ static int supported(mobj_t *actor){
     switch(actor->type){
     case MT_POSSESSED:case MT_SHOTGUY:case MT_CHAINGUY:case MT_WOLFSS:
     case MT_TROOP:case MT_SERGEANT:case MT_SHADOWS:case MT_BRUISER:case MT_KNIGHT:
+    case MT_HEAD:case MT_PAIN:case MT_SKULL:
     case MT_UNDEAD:case MT_FATSO:case MT_VILE:case MT_BABY:case MT_CYBORG:case MT_SPIDER:return 1;
     default:return 0;
     }
@@ -48,12 +49,13 @@ void P_FluidReset(void){
     stepping=NULL;divisor=1;
 }
 fixed_t P_FluidMoveSpeed(mobj_t *actor){return (fixed_t)((int64_t)actor->info->speed*FRACUNIT/(stepping==actor?divisor:1));}
+fixed_t P_FluidFloatSpeed(mobj_t *actor){return FLOATSPEED/(stepping==actor?divisor:1);}
 int P_FluidChase(mobj_t *actor,actionf_p1 action){
-    if(!P_FluidEnabled()||!supported(actor))return 0;
+    if(!P_FluidEnabled()||!supported(actor)||(actor->flags&MF_SKULLFLY))return 0;
     if(action!=(actionf_p1)A_Chase&&action!=(actionf_p1)A_VileChase&&action!=(actionf_p1)A_Hoof&&action!=(actionf_p1)A_Metal&&action!=(actionf_p1)A_BabyMetal)return 0;
     P_FluidRemove(actor);
     state_t *state=actor->state;int duration=actor->tics>0?actor->tics:1;
-    fixed_t x=actor->x,y=actor->y;
+    fixed_t x=actor->x,y=actor->y,z=actor->z;
     /* Some vanilla maps spawn actors slightly overlapping a blocking line.
        The ordinary chase step can leave that overlap, but every fractional
        step can still intersect it. Keep vanilla's full, collision-checked
@@ -70,7 +72,7 @@ int P_FluidChase(mobj_t *actor,actionf_p1 action){
     mobj_t *previous=stepping;int oldDivisor=divisor;stepping=actor;divisor=overlap?1:duration;
     action(actor);stepping=previous;divisor=oldDivisor;
     int64_t dx=(int64_t)actor->x-x,dy=(int64_t)actor->y-y;
-    double distance=hypot((double)dx/FRACUNIT,(double)dy/FRACUNIT);
+    double distance=hypot(hypot((double)dx/FRACUNIT,(double)dy/FRACUNIT),((double)actor->z-z)/FRACUNIT);
     if(!overlap&&actor->state==state&&actor->health>0&&duration>1&&actor->movedir<8&&actor->movedir>=0&&distance>.001&&distance<=abs(actor->info->speed)*2+1){
         walk_t *entry=Z_Malloc(sizeof(*entry),PU_LEVEL,NULL);memset(entry,0,sizeof(*entry));
         unsigned slot=bucket(actor);entry->next=walks[slot];walks[slot]=entry;
@@ -85,10 +87,11 @@ void P_FluidTick(mobj_t *actor){
     double dx=((double)actor->x-entry->x)/FRACUNIT;
     double dy=((double)actor->y-entry->y)/FRACUNIT;
     double dz=((double)actor->z-entry->z)/FRACUNIT;
-    if(!P_FluidEnabled()||actor->state!=entry->state||actor->health<=0||actor->movedir!=entry->direction||
+    if(!P_FluidEnabled()||(actor->flags&MF_SKULLFLY)||actor->state!=entry->state||actor->health<=0||actor->movedir!=entry->direction||
        dx*dx+dy*dy+dz*dz>64.0*64.0){P_FluidRemove(actor);return;}
     mobj_t *previous=stepping;int oldDivisor=divisor;stepping=actor;divisor=entry->duration;
     int moved=P_Move(actor);stepping=previous;divisor=oldDivisor;
     if(!moved||--entry->remaining<=0){P_FluidRemove(actor);return;}
     entry->x=actor->x;entry->y=actor->y;entry->z=actor->z;
 }
+

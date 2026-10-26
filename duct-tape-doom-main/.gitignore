@@ -22,6 +22,17 @@
 *.dsg
 *.pcx
 
+# Local notes, plans and research write-ups, never published
+/CLAUDE.md
+/PLAN-*.md
+/*-research.md
+.claude/
+
+# Scratch output from the render, music and perf tools
+/output/
+/tmp/
+/Screenshots/
+
 # Editor and OS clutter
 .DS_Store
 .vscode/
@@ -30,3 +41,6 @@
 
 # Written by the portability test, like portability.cfg and .wad
 /portability.deh
+
+# Python bytecode from the lab tools in tests/
+__pycache__/

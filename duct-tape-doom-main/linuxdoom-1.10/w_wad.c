@@ -130,6 +130,33 @@ int			reloadlump;
 char*			reloadname;
 
 
+// DERP: launchers hand every enabled mod to every port, so a file this
+// engine cannot read is skipped with a note rather than ending the game.
+// ZIP-based archives (.pk3, .pk7, .ipk3...) start with "PK\3\4"; a single
+// lump takes its name from a file base of at most 8 characters.
+static boolean W_IsArchive (int handle)
+{
+    char	magic[4];
+    boolean	archive;
+
+    archive = read (handle, magic, 4) == 4 && !memcmp (magic, "PK\3\4", 4);
+    lseek (handle, 0, SEEK_SET);
+    return archive;
+}
+
+static boolean W_LumpNameFits (char *filename)
+{
+    char*	base;
+    int		length;
+
+    base = filename + strlen(filename);
+    while (base != filename && base[-1] != '\\' && base[-1] != '/')
+	base--;
+    for (length = 0; base[length] && base[length] != '.'; length++)
+	;
+    return length <= 8;
+}
+
 void W_AddFile (char *filename)
 {
     wadinfo_t		header;
@@ -163,6 +190,21 @@ void W_AddFile (char *filename)
     if ( (handle = open (filename,O_RDONLY | O_BINARY)) == -1)
     {
 	printf (" couldn't open %s\n",filename);
+	return;
+    }
+
+    if (W_IsArchive (handle))
+    {
+	printf (" skipping %s: archives such as .pk3 are not supported\n",filename);
+	close (handle);
+	return;
+    }
+    if (strcmpi (filename+strlen(filename)-3 , "wad" )
+	&& !W_LumpNameFits (filename))
+    {
+	printf (" skipping %s: a lump file's name base must be 8 characters"
+		" or less\n",filename);
+	close (handle);
 	return;
     }
 

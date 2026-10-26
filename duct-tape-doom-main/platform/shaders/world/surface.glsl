@@ -15,6 +15,14 @@ vec4 surfaceLevel(sampler2D source,vec2 uv,vec2 pixel,int level) {
 }
 vec4 surfaceTexture(sampler2D source,vec2 uv,vec2 pixel,float lod) {
     int top=textureQueryLevels(source)-1;
+    // Texture-space blocks remain attached to the wall while the camera moves.
+    // Blend their boundaries narrowly, keeping silhouettes at full resolution.
+    if(c.style.x>0.0&&(vMode&MODE_LIQUID)==0u&&lod<0.75) {
+        float block=2.0;
+        vec2 coarse=sharpen(uv/block,vec2(0.22))*block;
+        float fade=1.0-smoothstep(0.0,0.75,lod);
+        return surfaceLevel(source,mix(uv,coarse,fade),pixel,0);
+    }
     bool liquid=(vMode&(MODE_SPRITE|MODE_LIQUID))==MODE_LIQUID;
     if((c.texFilter.y==0.0&&!liquid)||lod<=0.25||top==0) return surfaceLevel(source,uv,pixel,0);
     lod=min(lod,float(top));
@@ -72,4 +80,30 @@ float paletteShininess(uint index) {
     if(index>=80u&&index<112u) return 28.0;   // Greys.
     if(index>=160u&&index<168u) return 16.0;  // Pale yellows.
     return 12.0;
+}
+// Gloss and highlight sharpness from a texture's material (frameMean.a,
+// surfaceMaterial in scene3d/scene.cpp) and the texel's own colour, for
+// games whose palettes don't follow DOOM's ramps. Metal shines where it is
+// bare (grey) or brass (warm and bright), not where painted or rusted;
+// stone and wood stay nearly matte; sprites (2) are judged by colour
+// alone, much as DOOM's ramps judge them. 3 + game_surface: 3 stone,
+// 4 metal, 5 wood, 6 flesh, 7 soil, 8 liquid.
+void materialGloss(uint material,uint index,out float gloss,out float shininess) {
+    vec3 rgb=texelFetch(palette,ivec2(int(index),0),0).rgb;
+    float top=max(rgb.r,max(rgb.g,rgb.b)),saturation=(top-min(rgb.r,min(rgb.g,rgb.b)))/max(top,1e-3);
+    float luma=dot(rgb,vec3(0.299,0.587,0.114));
+    bool grey=saturation<0.3,brass=rgb.r>=rgb.b*1.4&&rgb.g>=rgb.b&&luma>0.35;
+    bool cool=rgb.b>=rgb.r&&saturation<0.6,green=rgb.g>rgb.r*1.2&&rgb.g>rgb.b*1.2;
+    gloss=0.03;shininess=12.0;
+    if(material==2u) {
+        if(grey||cool) {gloss=0.25;shininess=28.0;}
+        else if(green) {gloss=0.18;shininess=40.0;}
+    } else if(material==4u) {
+        if(grey) {gloss=0.35;shininess=28.0;}
+        else if(brass) {gloss=0.30;shininess=32.0;}
+        else {gloss=0.10;shininess=14.0;}
+    } else if(material==3u) {gloss=0.06;shininess=14.0;}
+    else if(material==5u) {gloss=0.04;shininess=10.0;}
+    else if(material==6u) {gloss=0.12;shininess=20.0;}
+    else if(material==8u) {gloss=0.20;shininess=40.0;}
 }

@@ -17,7 +17,8 @@ static inline unsigned char doom_switch_pixel(const unsigned char *rgb,
 }
 
 enum doom_emissive_kind { DOOM_EMISSIVE_NONE, DOOM_EMISSIVE_LAMP,
-    DOOM_EMISSIVE_PANEL, DOOM_EMISSIVE_LAVA, DOOM_EMISSIVE_SLIME, DOOM_EMISSIVE_MAGMA };
+    DOOM_EMISSIVE_PANEL, DOOM_EMISSIVE_LAVA, DOOM_EMISSIVE_SLIME, DOOM_EMISSIVE_MAGMA,
+    DOOM_EMISSIVE_GLASS /* backlit stained glass: every coloured pane, softly */ };
 /* Lists end with NULL; a trailing '*' marks a prefix, otherwise the name must match exactly. */
 static inline int doom_emissive_match(const char *name, const char *const *list)
 {
@@ -87,6 +88,12 @@ static inline unsigned char doom_emissive_pixel(int kind, const unsigned char *r
     } else if (kind==DOOM_EMISSIVE_SLIME) {
         if (g<r+24 || g<b+24) return 0;
         threshold=64;
+    } else if (kind==DOOM_EMISSIVE_GLASS) {
+        /* Coloured panes glow in their own colour, dim ones less; the dark
+           lead between them and the grey stone frame stay shaded. */
+        if (hi-lo<32) return 0;
+        int value=(hi-40)*200/160;
+        return (unsigned char)(value<0?0:value>200?200:value);
     } else if (kind==DOOM_EMISSIVE_PANEL) {
         if (hi-lo<40) return 0;
         if (!(g>r*1.4 && g>b*1.2) && !(b>r*1.4 && b>g*1.2) &&

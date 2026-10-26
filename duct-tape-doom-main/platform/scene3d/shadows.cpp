@@ -6,9 +6,16 @@ namespace doom3d {
 // The strongest visible shot or projectile supplies a world-space light here.
 // Contact shadows stay separate and remain after the transient shadow fades.
 void addEnemyShadow(const mobj_t &thing,const Image &image,int lump,bool flip,
-                    float x,float y,float z,const Uniforms &camera,const ShadowLight *light,bool anyThing) {
-    if(!anyThing&&!(thing.info->flags&MF_COUNTKILL)&&thing.type!=MT_SKULL) return;
-    const sector_t *sector=thing.subsector->sector;
+                    float x,float y,float z,const Uniforms &camera,const ShadowLight *light,bool anyThing,const RagdollCard *card) {
+    if(!anyThing&&!(thing.info->flags&MF_COUNTKILL)&&Game_ThingRole(thing.type)!=GAME_THING_UNCOUNTED_MONSTER) return;
+    float u0=0,v0=0,u1=image.width,v1=image.height;
+    if(card) {
+        if(card->u1<=card->u0||card->v1<=card->v0)return;
+        u0=card->u0;v0=card->v0;u1=card->u1;v1=card->v1;
+        float centre=(u0+u1)*0.5f-card->half;
+        x+=camera.right[0]*centre;y+=camera.right[1]*centre;z=card->top-v1;
+    }
+    const sector_t *sector=card?R_PointInSubsector((fixed_t)(x*FRACUNIT),(fixed_t)(y*FRACUNIT))->sector:thing.subsector->sector;
     if(sector->floorpic==skyflatnum) return;
     float floor=floorZ(sector),height=std::max(0.0f,z-floor);
     float opacity=0.28f*lighting(sector)/(1.0f+height/48.0f);
@@ -55,7 +62,7 @@ void addEnemyShadow(const mobj_t &thing,const Image &image,int lump,bool flip,
             float u=(dx*across.x+dy*across.y)/width+0.5f;
             float v=1.0f-((dx*away.x+dy*away.y)-start)/length;
             // Twice the blood's lift, so shadows fall on top of blood decals.
-            return Vertex{p.x,p.y,floor+2*decalLift(p.x,p.y,camera),(flip?1-u:u)*image.width,v*image.height,opacity,0};
+            return Vertex{p.x,p.y,floor+2*decalLift(p.x,p.y,camera),u0+(flip?1-u:u)*(u1-u0),v0+v*(v1-v0),opacity,0};
         };
         for(size_t n=1;n+1<polygon.size();++n)
             for(Point p:{polygon[0],polygon[n],polygon[n+1]}) out.push_back(vertex(p));
@@ -82,9 +89,11 @@ static std::vector<WallPoint> clipWallPolygon(const std::vector<WallPoint> &poly
     }
     return out;
 }
-void flashlightSilhouette(const mobj_t &thing,const Image &image,int lump,bool flip,float x,float y,float z,const Uniforms &camera,const Flash &beam) {
+void flashlightSilhouette(const mobj_t &thing,const Image &image,int lump,bool flip,float x,float y,float z,const Uniforms &camera,const Flash &beam,const RagdollCard *card) {
+    if(card&&(card->u1<=card->u0||card->v1<=card->v0))return;
     const float *lamp=beam.position;
-    float cz=z+units(thing.height)*0.5f,dx=x-lamp[0],dy=y-lamp[1],horizontal=std::hypot(dx,dy);
+    float cz=card?card->top-(card->v0+card->v1)*0.5f:z+units(thing.height)*0.5f;
+    float dx=x-lamp[0],dy=y-lamp[1],horizontal=std::hypot(dx,dy);
     if(horizontal<16)return;
     float ex=x-camera.eye[0],ey=y-camera.eye[1],ez=cz-camera.eye[2],distance=std::sqrt(ex*ex+ey*ey+ez*ez);
     if(distance>700||(ex*camera.forward[0]+ey*camera.forward[1]+ez*camera.forward[2])/distance<beam.direction[3])return;
@@ -98,7 +107,9 @@ void flashlightSilhouette(const mobj_t &thing,const Image &image,int lump,bool f
     float tx=sx/len,ty=sy/len,nx=ty,ny=-tx;
     float planeDistance=(span.a.x-lamp[0])*nx+(span.a.y-lamp[1])*ny;
     float rx=camera.right[0],ry=camera.right[1];
-    float left=-(float)image.left,right=left+image.width,top=z+image.top,bottom=top-image.height;
+    float u0=card?card->u0:0,v0=card?card->v0:0,u1=card?card->u1:image.width,v1=card?card->v1:image.height;
+    float left=card?u0-card->half:-(float)image.left,right=left+(u1-u0);
+    float top=card?card->top-v0:z+image.top,bottom=top-(v1-v0);
     constexpr int columns=6,rows=8;
     std::array<WallPoint,(columns+1)*(rows+1)> grid;std::array<bool,(columns+1)*(rows+1)> valid;
     for(int j=0;j<=rows;++j)for(int i=0;i<=columns;++i) {
@@ -107,7 +118,7 @@ void flashlightSilhouette(const mobj_t &thing,const Image &image,int lump,bool f
         float toward=px*nx+py*ny,scale=toward<-1e-3f?planeDistance/toward:-1;
         int k=j*(columns+1)+i;valid[k]=scale>=1;
         float qx=lamp[0]+px*scale,qy=lamp[1]+py*scale;
-        grid[k]={(qx-span.a.x)*tx+(qy-span.a.y)*ty,lamp[2]+pz*scale,(flip?1-(float)i/columns:(float)i/columns)*image.width,(float)j/rows*image.height};
+        grid[k]={(qx-span.a.x)*tx+(qy-span.a.y)*ty,lamp[2]+pz*scale,u0+(flip?1-(float)i/columns:(float)i/columns)*(u1-u0),v0+(float)j/rows*(v1-v0)};
     }
     float lift=2*decalLift(span.a.x+tx*len*0.5f,span.a.y+ty*len*0.5f,camera)+0.6f; // Above wall blood.
     auto &out=decalBatches[lump];

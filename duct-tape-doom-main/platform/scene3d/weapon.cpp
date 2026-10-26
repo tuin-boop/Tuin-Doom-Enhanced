@@ -50,6 +50,7 @@ static void initializeFluidTextures() {
 }
 void fluidWeaponShot(mobj_t*origin,int weapon,int flash) {
     muzzleFlash(origin,weapon,flash);
+    if(weapon==wp_missile)fluidRocketLaunch(origin);
     if(fluidEnabled()&&origin==players[displayplayer].mo)fluidAnimation.shot(weapon);
 }
 void fluidWeaponAttack(player_t*player) {

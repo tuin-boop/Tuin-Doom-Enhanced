@@ -66,6 +66,7 @@ fixed_t		tmdropoffz;
 // keep track of the line that lowers the ceiling,
 // so missiles don't explode against sky hack walls
 line_t*		ceilingline;
+int p_missile_hit_actor=0;
 
 // keep track of special lines as they are hit,
 // but don't process them until the move is proven valid
@@ -145,6 +146,7 @@ P_TeleportMove
 
     newsubsec = R_PointInSubsector (x,y);
     ceilingline = NULL;
+    p_missile_hit_actor=0;
     
     // The base floor/ceiling is from the subsector
     // that contains the point.
@@ -362,6 +364,7 @@ boolean PIT_CheckThing (mobj_t* thing)
 	    if (thing->type != MT_PLAYER && !deh_species_infighting)
 	    {
 		// Explode, but do no damage.
+                p_missile_hit_actor=1;
 		// Let players missile other players.
 		return false;
 	    }
@@ -370,10 +373,12 @@ boolean PIT_CheckThing (mobj_t* thing)
 	if (! (thing->flags & MF_SHOOTABLE) )
 	{
 	    // didn't do any damage
+            if(thing->flags&MF_SOLID)p_missile_hit_actor=1;
 	    return !(thing->flags & MF_SOLID);	
 	}
 	
 	// Record the actual actor impact for nearby surface blast damage.
+        p_missile_hit_actor=1;
         P_GlobalDigMonsterContact(tmthing,tmx,tmy);
         SV_MonsterContact(tmthing,thing);
 	// damage / explode
@@ -470,6 +475,7 @@ P_CheckPosition
 
     newsubsec = R_PointInSubsector (x,y);
     ceilingline = NULL;
+    p_missile_hit_actor=0;
     
     // The base floor / ceiling is from the subsector
     // that contains the point.
@@ -1041,6 +1047,12 @@ static mobj_t *la_hit;
 boolean		la_freeaim;
 static sector_t* la_sector;
 
+// Where the shot stopped, as a fraction of attackrange, and what it hit.
+void (*P_ShotTraced)(mobj_t *shooter, mobj_t *hit, fixed_t x1, fixed_t y1, fixed_t z1,
+                     fixed_t x2, fixed_t y2, fixed_t z2);
+static fixed_t	la_endfrac;
+static mobj_t*	la_hit;
+
 static boolean PTR_ShootPlane (fixed_t frac)
 {
     if(SV_Active())return true; // The shared mesh already bounds this shot.
@@ -1071,6 +1083,7 @@ static boolean PTR_ShootPlane (fixed_t frac)
     x = trace.x + FixedMul (trace.dx, frac);
     y = trace.y + FixedMul (trace.dy, frac);
     z = ceiling ? plane - 4*FRACUNIT : plane;
+    la_endfrac = frac;
 
     if(la_damage>0)P_GlobalDigBulletFlat(shootthing,(int)(la_sector-sectors),ceiling,x,y);
     if (!R_PlaneImpact || !R_PlaneImpact (la_sector, ceiling, x, y, z))
@@ -1115,6 +1128,7 @@ boolean PTR_ShootTraverse (intercept_t* in)
     }
     if (la_freeaim && !PTR_ShootPlane (in->frac))
 	return false;
+    la_endfrac = in->frac;
 
     la_endfrac=in->frac;
     if (in->isaline)
@@ -1233,6 +1247,7 @@ boolean PTR_ShootTraverse (intercept_t* in)
     // hit thing
     // position a bit closer
     frac = in->frac - FixedDiv (10*FRACUNIT,attackrange);
+    la_hit = th;
 
     x = trace.x + FixedMul (trace.dx, frac);
     y = trace.y + FixedMul (trace.dy, frac);
@@ -1246,7 +1261,7 @@ boolean PTR_ShootTraverse (intercept_t* in)
     {
 	P_SpawnBlood (x,y,z, la_damage);
 	if (R_BloodHit)
-	    R_BloodHit (th, x, y, z, trace.dx, trace.dy, la_damage, aimslope, shootthing);
+	    R_BloodHit (th, shootthing, x, y, z, trace.dx, trace.dy, aimslope, la_damage);
     }
 
     la_hit=th;
@@ -1327,6 +1342,7 @@ P_LineAttack
 	shootz = t1->player->viewz;
 	la_sector = t1->subsector->sector;
     }
+    la_hit = NULL;
 		
     solidFraction=FRACUNIT;
     if(SV_Active())solidFraction=(fixed_t)(FRACUNIT*SV_Trace(t1->x/(float)FRACUNIT,t1->y/(float)FRACUNIT,shootz/(float)FRACUNIT,
@@ -1341,8 +1357,15 @@ P_LineAttack
         la_endfrac=solidFraction;
         if(damage>0){
             if(!SV_MapMode()||(t1->player?p_player_surface_damage:p_monster_surface_damage))SV_Impact(solidPoint,solidOwner,2.f);
-            if(R_SolidBulletImpact)R_SolidBulletImpact(solidPoint[0],solidPoint[1],solidPoint[2],solidPoint[3],solidPoint[4],solidPoint[5]);
-            P_SpawnPuff((fixed_t)(solidPoint[0]*FRACUNIT),(fixed_t)(solidPoint[1]*FRACUNIT),(fixed_t)(solidPoint[2]*FRACUNIT));
+            fixed_t hx=(fixed_t)(solidPoint[0]*FRACUNIT),hy=(fixed_t)(solidPoint[1]*FRACUNIT),hz=(fixed_t)(solidPoint[2]*FRACUNIT);
+            sector_t *room=R_PointInSubsector(hx,hy)->sector;
+            // Original sector floors still need the liquid/flat callback in
+            // solid-world mode. Rubble and excavated surfaces use the mesh hit.
+            boolean floorHit=solidPoint[5]>.5f&&abs(hz-room->floorheight)<=2*FRACUNIT;
+            boolean handled=false;
+            if(floorHit&&R_PlaneImpact)handled=R_PlaneImpact(room,false,hx,hy,hz);
+            else if(R_SolidBulletImpact)R_SolidBulletImpact(solidPoint[0],solidPoint[1],solidPoint[2],solidPoint[3],solidPoint[4],solidPoint[5]);
+            if(!handled)P_SpawnPuff(hx,hy,hz);
         }
     }
     la_freeaim = false;

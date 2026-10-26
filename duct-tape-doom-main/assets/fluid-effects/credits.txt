@@ -1,2 +1,4 @@
 FluidWeapons original particle masks NSHSB0/NSHSF0 and behavior from MRSmooth-code/Particles/Player.zsc.
 Decal artwork CHIP1-5, SCORCH1, PLASMA1-2, BFGSCRC1-2, BFGLITE1-2 is inherited by FluidWeapons from the base engine, imported from local UZDoom uzdoom.pk3. Definitions retain source scales and glow fade times.
+
+Rocket default glpart.png: unmodified glstuff/glpart.png from local UZDoom 4.14.3 uzdoom.pk3. Rocket behavior audited against bundled FluidWeapons Player.zsc and RocketLauncher.zsc.

@@ -90,6 +90,10 @@ I_UpdateSoundParams
 // Where a positioned sound is in the map, for muffling and distance.
 // Handle 0 places the sound the next I_StartSound starts.
 void I_SoundAt(int handle, fixed_t x, fixed_t y, fixed_t z);
+// How far an effect carries, FRACUNIT as DOOM hears it (gone past 1200
+// units): a mixer with a natural falloff lets loud ones (gunfire, blasts)
+// reach farther, fainter and muffled.
+fixed_t I_SoundReach(int id);
 
 
 //

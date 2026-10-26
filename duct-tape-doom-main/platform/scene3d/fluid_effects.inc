@@ -4,6 +4,7 @@
 struct FluidParticle {
     float x,y,z,vx,vy,vz,az,size,growth,alpha,age,life;
     int mask; bool add; std::array<float,3> color;
+    float ax=0,ay=0,halfSize=.5f,fadeTics=0,roll=0,rollSpeed=0;
 };
 struct FluidBurst {float x,y,z;int type,tic;};
 struct FluidMark {int line,side,section,sector,mask;bool ceiling,flip;float u,z,size,born,fadeStart,life;std::array<float,3> color;unsigned supportRevision=~0u;};
@@ -32,9 +33,22 @@ static void fluidParticle(float x,float y,float z,int mask,bool add,std::array<f
     if(fluidParticles.size()>=4096)return;
     fluidParticles.push_back({x,y,z,vx,vy,vz,az,size,growth,alpha,0,life,mask,add,color});
 }
+// GZDoom textured particles: half extent = size * (2.5 / 7).
+// Fluid's helper fades over Life-1; a zero fade is used for shrinking sparks.
+static void originalRocketParticle(float x,float y,float z,int mask,bool add,std::array<float,3> color,
+    float life,float size,float vx=0,float vy=0,float vz=0,float az=0,float alpha=1,float growth=0,
+    float ax=0,float ay=0,bool fade=true,float roll=0,float rollSpeed=0) {
+    size_t count=fluidParticles.size();
+    fluidParticle(x,y,z,mask,add,color,life,size,vx,vy,vz,az,alpha,growth);
+    if(fluidParticles.size()==count)return;
+    auto &p=fluidParticles.back();p.ax=ax;p.ay=ay;p.halfSize=2.5f/7.f;
+    p.fadeTics=fade?std::max(1.f,life-1):-1;p.roll=roll;p.rollSpeed=rollSpeed;
+}
+static int rocketRandom(int low,int high){return std::min(high,low+int(randomRange(0,float(high-low+1))));}
 // Cosmetic surface bursts use a separate, small budget and no gameplay RNG.
 // They remain available when the optional Fluid weapon replacement is disabled.
 void rubbleImpact(int type,float x,float y,float z,float nx,float ny,float nz) {
+    environmentBlast(x+nx*3,y+ny*3,z+nz*3,type==MT_ROCKET||type==MT_BFG?1.f:.25f);
     resetFluidEffects();
     if(std::getenv("DOOM_TEST_RUBBLE"))printf("RUBBLE hit type %d tic %d at %.1f %.1f %.1f normal %.2f %.2f %.2f\n",type,gametic,x,y,z,nx,ny,nz);
     bool rocket=type==MT_ROCKET||type==MT_TRACER;
@@ -45,6 +59,17 @@ void rubbleImpact(int type,float x,float y,float z,float nx,float ny,float nz) {
         plasma?std::array<float,3>{.3f,.55f,1}:std::array<float,3>{1,.32f,.055f};
     addSurfaceGlow(type,x,y,z,nx,ny,nz,color);
     if(rocket||bfg){surfaceChip(x+nx*2,y+ny*2,z+nz*2,nx,ny,nz);}
+    auto material=rubbleSurfaceColor(x,y,z);
+    if(type==MT_ROCKET&&settings.rocketChunks){
+        resetImpactLevel();
+        int active=int(std::count_if(impactParticles.begin(),impactParticles.end(),[](const auto &p){return p.kind==4;}));
+        for(int i=0;i<6&&active+i<48;++i){
+            float size=randomRange(3.5f,7.f),speed=randomRange(70,150);
+            float vx=randomRange(-65,65),vy=randomRange(-65,65),vz=randomRange(25,115);
+            float dot=vx*nx+vy*ny+vz*nz;if(dot<0){vx-=dot*nx;vy-=dot*ny;vz-=dot*nz;}
+            impactParticle(x+nx*(size+1),y+ny*(size+1),z+nz*(size+1),vx+nx*speed,vy+ny*speed,vz+nz*speed,randomRange(1.7f,2.8f),size,4,material);
+        }
+    }
     int count=bfg?12:rocket?12:fat?8:plasma?4:6;
     float speed=bfg?2.8f:rocket?2.2f:plasma?.9f:1.4f;
     auto emit=[&](int mask,bool add,std::array<float,3> c,float life,float size,float vx,float vy,float vz,float gravity,float growth){
@@ -58,7 +83,7 @@ void rubbleImpact(int type,float x,float y,float z,float nx,float ny,float nz) {
         if(dot<0){vx-=2*dot*nx;vy-=2*dot*ny;vz-=2*dot*nz;}
         // Crisp chips remain readable after the stock explosion has faded.
         bool stone=rocket;
-        emit(i%5,!stone,stone?std::array<float,3>{.6f,.56f,.5f}:color,
+        emit(i%5,!stone,stone?std::array<float,3>{.6f*material[0],.6f*material[1],.6f*material[2]}:color,
              plasma?24:42,plasma?randomRange(.8f,1.8f):randomRange(3,6),
              (vx+nx)*speed,(vy+ny)*speed,(vz+nz)*speed,-.08f,-.025f);
         if((bfg||green||fat)&&i%3==0)
@@ -67,7 +92,7 @@ void rubbleImpact(int type,float x,float y,float z,float nx,float ny,float nz) {
     emit(12,true,color,bfg?35:fat?35:plasma?18:12,bfg?38:fat?26:plasma?7:18,nx*.1f,ny*.1f,nz*.1f,0,-.35f);
     if(!plasma){
         for(int i=0;i<(fat?3:2);++i)
-            emit(13,false,{.3f,.28f,.25f},fat?48:38,rocket?24:16,nx*.35f+randomRange(-.3f,.3f),ny*.35f+randomRange(-.3f,.3f),nz*.35f+.4f,0,.5f);
+            emit(13,false,{.3f*material[0],.3f*material[1],.3f*material[2]},fat?48:38,rocket?24:16,nx*.35f+randomRange(-.3f,.3f),ny*.35f+randomRange(-.3f,.3f),nz*.35f+.4f,0,.5f);
     }
 }
 static void tickRubbleEffects(){
@@ -139,6 +164,7 @@ void fluidBFGHit(mobj_t *ball,mobj_t *victim) {
 }
 extern "C" int p_diglastchanged;
 void fluidProjectileImpact(mobj_t *mo) {
+    if(liquidProjectileImpact(mo))return;
     if(mo&&mo->type==MT_ROCKET&&p_diglastchanged>0){
         dropOldLevelImpacts();
         float dx=units(mo->momx),dy=units(mo->momy),len=std::max(.01f,std::hypot(dx,dy));
@@ -186,9 +212,21 @@ void fluidProjectileFlight(const mobj_t &mo) {
     float x=units(mo.x),y=units(mo.y),z=units(mo.z),vx=units(mo.momx),vy=units(mo.momy),vz=units(mo.momz);
     float len=std::sqrt(vx*vx+vy*vy+vz*vz);if(len<.01f)return;
     if(type==MT_ROCKET) {
-        for(float i=12;i<=len+12;i+=6)fluidParticle(x-vx/len*i,y-vy/len*i,z+5-vz/len*i,13,false,{.118f,.118f,.118f},10,randomRange(25,28),0,0,0,.1f,.9f,-.5f);
-        fluidParticle(x-vx/len*9,y-vy/len*9,z+5-vz/len*9,12,false,{.745f,.157f,0},2,randomRange(24,35),vx,vy,vz,0,.7f);
-        for(float i=0;i<1;i+=.25f)fluidParticle(x-vx*i,y-vy*i,z+5-vz*i,12,true,fluidColor(type,25,150),5,25,0,0,0,0,.6f,-5);
+        // Original default flags disable flight smoke, but enable impact smoke.
+        int mask=settings.fluidRocketFire?14:15;
+        originalRocketParticle(x-vx/len*9,y-vy/len*9,z+5-vz/len*9,mask,false,{190/255.f,40/255.f,0},2,float(rocketRandom(24,35)),vx,vy,vz,0,.7f);
+        float col=25*rocketRandom(1,6)/255.f;
+        for(float i=0;i<1;i+=.25f)originalRocketParticle(x-vx*i,y-vy*i,z+5-vz*i,mask,true,{1,col,std::floor(col*255*.5f)/255},5,25,0,0,0,0,.6f,-5);
+        if(leveltime%2==0){
+            float ang=std::atan2(vy,vx),pit=std::atan2(vz,std::hypot(vx,vy));
+            float power=float(rocketRandom(1,2)),rp=rocketRandom(-70,70)*doomPi/180;
+            float side=ang+(rocketRandom(0,1)?1:-1)*doomPi*.5f;
+            float sx=std::cos(side)*power+std::cos(ang+rp*4)*power*std::sin(pit);
+            float sy=std::sin(side)*power+std::sin(ang+rp*4)*power*std::sin(pit);
+            int c=25*rocketRandom(4,8);
+            originalRocketParticle(x,y,z+5,mask,true,{1,c/255.f,(c/2)/255.f},float(rocketRandom(6,10)),randomRange(2,3),
+                sx+vx*.5f,sy+vy*.5f,power*std::sin(rp)*std::cos(pit)+vz*.5f,-.2f,1,0,randomRange(-.1f,.1f),randomRange(-.1f,.1f));
+        }
     }else if(type==MT_PLASMA) {
         for(float i=0;i<2;i+=.25f)fluidParticle(x-vx*i,y-vy*i,z+2-vz*i,12,true,fluidColor(type,25,150),3,24-i*8,vx,vy,vz,0,.4f,-8);
     }else {
@@ -196,20 +234,33 @@ void fluidProjectileFlight(const mobj_t &mo) {
         for(int i=0;i<5;++i){float a=leveltime*.018f+i*1.256637f,p=leveltime*.24f+i*2.1f;
             fluidParticle(x+std::cos(a)*std::cos(p)*30,y+std::sin(a)*std::cos(p)*30,z+12+std::sin(p)*30,12,true,{.47f,1,.43f},2,3,vx,vy,vz,0,.7f);}
     }
-    if(type!=MT_ROCKET||leveltime%2==0){float a=randomRange(0,2*doomPi),speed=type==MT_BFG?3.5f:2.5f;
+    if(type!=MT_ROCKET){float a=randomRange(0,2*doomPi),speed=type==MT_BFG?3.5f:2.5f;
         fluidParticle(x+randomRange(-4,4),y+randomRange(-4,4),z+(type==MT_BFG?15:5),12,true,fluidColor(type,50,250),randomRange(6,12),randomRange(2,5),vx+std::cos(a)*speed,vy+std::sin(a)*speed,vz+randomRange(-2,2),-.2f);}
 }
+// The original launcher supplies its own GunFlash overlays. Do not invent a
+// second world-space trail at the muzzle (it produces an oversized fire disc).
+void fluidRocketLaunch(mobj_t *) {}
 void tickFluidEffects() {
     resetFluidEffects();tickRubbleEffects();
     if(!settings.fluidWeapons){fluidParticles.clear();fluidBursts.clear();fluidMarks.clear();return;}
-    for(auto &p:fluidParticles){p.age++;p.x+=p.vx;p.y+=p.vy;p.z+=p.vz;p.vz+=p.az;p.size+=p.growth;}
+    for(auto &p:fluidParticles){p.age++;p.x+=p.vx;p.y+=p.vy;p.z+=p.vz;p.vx+=p.ax;p.vy+=p.ay;p.vz+=p.az;p.size+=p.growth;p.roll+=p.rollSpeed;}
     fluidParticles.erase(std::remove_if(fluidParticles.begin(),fluidParticles.end(),[](const auto &p){return p.age>=p.life||p.size<=0;}),fluidParticles.end());
     for(auto &b:fluidBursts){int t=++b.tic;float x=b.x,y=b.y,z=b.z;
         if(b.type==MT_ROCKET){
-            if(t<7)fluidParticle(x,y,z,13,false,{.118f,.118f,.118f},randomRange(20,30),randomRange(32,35),randomRange(-3,3),randomRange(-3,3),randomRange(-.5f,2),0,.65f,randomRange(4.4f,5));
-            if(t<7&&t%2==0){for(int i=int(randomRange(0,10));i<40;++i){float a=randomRange(0,2*doomPi),v=randomRange(1,4),size=randomRange(1,3),life=40-v;
-                fluidParticle(x,y,z,12,true,fluidColor(b.type),life,size,std::cos(a)*v,std::sin(a)*v,randomRange(-1,5),-randomRange(.005f,.7f),1,-size/life);}
-                if(t==2)fluidParticle(x,y,z+5,12,true,{1,.2f,.08f},8,20,0,0,0,0,1,27);}
+            int mask=settings.fluidRocketFire?14:15;
+            auto *viewer=players[displayplayer].mo;
+            float dx=viewer?units(viewer->x)-x:0,dy=viewer?units(viewer->y)-y:0,dz=viewer?units(viewer->z)-z:0;
+            float dist=std::max(1.f,1+(std::sqrt(dx*dx+dy*dy+dz*dz)-80)*.0016f);
+            // Player.zsc default enables one rotating smoke particle on tics 1..6.
+            if(t<7){float angle=float(rocketRandom(-30,30)),a=std::atan2(dy,dx)+angle*2*doomPi/180;
+                originalRocketParticle(x,y,z,13,false,{30/255.f,30/255.f,30/255.f},float(rocketRandom(20,30)),float(rocketRandom(32,35)),
+                    std::cos(a)*3,std::sin(a)*3,randomRange(-.5f,2),0,randomRange(.6f,.7f),randomRange(4.4f,5),0,0,true,float(rocketRandom(0,360))*doomPi/180,-angle*.1f*doomPi/180);}
+            if(t<7&&t%2==0){for(int i=rocketRandom(0,10);i<40;++i){
+                float v=randomRange(1,4),a=rocketRandom(0,360)*doomPi/180,size=randomRange(1,3)*dist,life=float(int(40-v));
+                int c=25*rocketRandom(4,10);
+                originalRocketParticle(x,y,z,mask,true,{1,c/255.f,(c/2)/255.f},life,size,std::cos(a)*v*dist,std::sin(a)*v*dist,
+                    std::sin(rocketRandom(-20,40)*doomPi/180)*v*2*dist,-randomRange(.005f,.7f)*dist,1,-size/life,0,0,false);}
+                if(t==2){int g=rocketRandom(30,70);originalRocketParticle(x,y,z+5,mask,true,{1,g/255.f,rocketRandom(10,g/2)/255.f},8,20,0,0,0,0,1,float(rocketRandom(25,30)));}}
         }else {
             if((b.type==MT_PLASMA&&t==1)||(b.type==MT_BFG&&t<10)){
                 int count=b.type==MT_PLASMA?6:std::max(0,40-(t-4)*6);
@@ -273,8 +324,8 @@ static void drawFluidEffects(const Uniforms &camera) {
     auto depth=[&](const auto *p){return (p->x-camera.eye[0])*camera.forward[0]+(p->y-camera.eye[1])*camera.forward[1]+(p->z-camera.eye[2])*camera.forward[2];};
     std::sort(sorted.begin(),sorted.end(),[&](auto a,auto b){return depth(a)>depth(b);});
     for(auto ptr:sorted){const auto &p=*ptr;if(depth(ptr)<1)continue;int lump=fluidImage(p.mask);const auto &im=fluidMasks[p.mask];
-        float f=renderFraction-1,x=p.x+p.vx*f,y=p.y+p.vy*f,z=p.z+p.vz*f,h=std::max(.1f,p.size+p.growth*f)*.5f,alpha=p.alpha*std::clamp(1-(p.age+f)/p.life,0.f,1.f);
-        auto v=[&](float u,float a,float tu,float tv){Vertex b={x+camera.right[0]*u+camera.up[0]*a,y+camera.right[1]*u+camera.up[1]*a,z+camera.right[2]*u+camera.up[2]*a,tu,tv,alpha,0};b.red=p.color[0];b.green=p.color[1];b.blue=p.color[2];return b;};
+        float f=renderFraction-1,x=p.x+p.vx*f,y=p.y+p.vy*f,z=p.z+p.vz*f,h=std::max(.1f,p.size+p.growth*f)*p.halfSize,alpha=p.alpha*(p.fadeTics<0?1:std::clamp(1-(p.age+f)/(p.fadeTics>0?p.fadeTics:p.life),0.f,1.f));
+        auto v=[&](float u,float a,float tu,float tv){float r=p.roll+p.rollSpeed*f,c=std::cos(r),s=std::sin(r),old=u;u=c*u-s*a;a=s*old+c*a;Vertex b={x+camera.right[0]*u+camera.up[0]*a,y+camera.right[1]*u+camera.up[1]*a,z+camera.right[2]*u+camera.up[2]*a,tu,tv,alpha,p.mask==14?4096u:0u};b.red=p.color[0];b.green=p.color[1];b.blue=p.color[2];return b;};
         auto &out=p.add?effectAddBatches[lump]:effectBatches[lump];quad(out,v(-h,h,0,0),v(h,h,im.w,0),v(h,-h,im.w,im.h),v(-h,-h,0,im.h));
     }
 }
