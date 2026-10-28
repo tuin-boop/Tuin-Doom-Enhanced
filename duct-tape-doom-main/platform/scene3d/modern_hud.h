@@ -1,10 +1,11 @@
 // Full-view HUD drawn into the existing transparent overlay. No world renderer changes.
 #ifndef DOOM_MODERN_HUD_H
 #define DOOM_MODERN_HUD_H
-extern "C" { int ST_FaceIndex(void); }
+extern "C" { int ST_FaceIndex(void); int Arcade_MenuOpen(void); extern int arcade_active; }
+extern "C" { const unsigned char *ST_HelmetFace(int index); }
 namespace doom3d {
 inline void modernHud(std::vector<unsigned>& out) {
-    if(!worldPending||menuactive||automapactive)return;
+    if(!worldPending||menuactive||automapactive||Arcade_MenuOpen())return;
     std::vector<unsigned> hud(SCREENWIDTH*SCREENHEIGHT,0);
     const auto& p=players[displayplayer];
     auto rect=[&](int x,int y,int w,int h,unsigned color){
@@ -25,12 +26,12 @@ inline void modernHud(std::vector<unsigned>& out) {
         float scale=std::min(float(maxW)/img.width,float(maxH)/img.height);
         int w=std::max(1,int(img.width*scale)),h=std::max(1,int(img.height*scale));
         for(int yy=0;yy<h;++yy)for(int xx=0;xx<w;++xx){int sx=std::min(img.width-1,int(xx/scale)),sy=std::min(img.height-1,int(yy/scale));size_t at=(sy*img.width+sx)*2;
-            if(at+1<img.pixels.size()&&img.pixels[at+1]){const byte* rgb=palette+img.pixels[at]*3;rect(x+xx,y+yy,1,1,(unsigned(img.pixels[at+1])<<24)|(unsigned(rgb[0])<<16)|(unsigned(rgb[1])<<8)|rgb[2]);}}
+            if(at+1<img.pixels.size()&&img.pixels[at+1]){const byte* rgb=palette+img.pixels[at]*3;rect(x+xx,y+yy,1,1,(unsigned(img.pixels[at+1])<<24)|(unsigned(gammatable[usegamma][rgb[0]])<<16)|(unsigned(gammatable[usegamma][rgb[1]])<<8)|gammatable[usegamma][rgb[2]]);}}
     };
     const bool tactical=settings.hudStyle==2;
     const unsigned white=0xffedf3f3,muted=0xff9aafb7,red=p.health<=25?0xffff5d4c:0xffeead72,blue=0xff6ed6dc,back=0xc0142028;
     int hx=12,ax=tactical?76:88;
-    if(settings.hudFace==1){rect(8,157,32,38,back);hx=46;ax=92;}
+    if(settings.hudFace==1){hx=52;ax=tactical?100:98;}
     rect(hx-4,164,tactical?42:40,31,back);rect(ax-4,164,40,31,back);rect(252,164,60,31,back);
     text("HEALTH",hx,167,1,muted);text(std::to_string(std::max(0,p.health)),hx,176,2,red);
     text("ARMOR",ax,167,1,muted);text(std::to_string(std::max(0,p.armorpoints)),ax,176,2,blue);
@@ -57,7 +58,20 @@ inline void modernHud(std::vector<unsigned>& out) {
         else if(variant<3)snprintf(name,sizeof(name),"STFST%d%d",pain,variant);
         else if(variant<5)snprintf(name,sizeof(name),variant==3?"STFTR%d0":"STFTL%d0",pain);
         else snprintf(name,sizeof(name),variant==5?"STFOUCH%d":variant==6?"STFEVL%d":"STFKILL%d",pain);
-        int x=settings.hudFace==2?146:10;rect(x-2,157,32,38,back);rect(x-2,157,32,1,red);art(name,x,161,28,32);
+        int x=settings.hudFace==2?146:10;
+        const unsigned char* helmet=ST_HelmetFace(face);
+        rect(x-(helmet?4:2),157,helmet?36:32,38,back);rect(x-(helmet?4:2),157,helmet?36:32,1,red);
+        if(const unsigned char* patch=helmet){
+            int width=patch[0]|patch[1]<<8,height=patch[2]|patch[3]<<8;
+            const byte* pal=(const byte*)W_CacheLumpName((char*)"PLAYPAL",PU_CACHE);
+            // Preserve every source pixel: shrinking 32 to 28 drops eye rows/columns.
+            int w=width,h=height;
+            for(int xx=0;xx<w;++xx){int sx=xx*width/w;const auto* p=patch+8+sx*4;
+                const auto* post=patch+(unsigned(p[0])|unsigned(p[1])<<8|unsigned(p[2])<<16|unsigned(p[3])<<24);
+                while(post[0]!=255){for(int yy=0;yy<h;++yy){int sy=yy*height/h;if(sy<post[0]||sy>=post[0]+post[1])continue;
+                    auto rgb=pal+post[3+sy-post[0]]*3;rect(x+(28-w)/2+xx,161+yy,1,1,0xff000000|unsigned(gammatable[usegamma][rgb[0]])<<16|unsigned(gammatable[usegamma][rgb[1]])<<8|gammatable[usegamma][rgb[2]]);}post+=post[1]+4;}
+            }
+        }else art(name,x,161,28,32);
     }
     if(!settings.hudStyle){
         std::fill(hud.begin(),hud.end(),0);

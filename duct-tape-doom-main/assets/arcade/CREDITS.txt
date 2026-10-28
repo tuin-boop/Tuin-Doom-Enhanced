@@ -1,0 +1,5 @@
+TINYBABY / Tiny font: Jimmy.
+Source: user-supplied TuinDoomRPG/src/TINYBABY.lmp, originally from Doom Delta v3.1.0.
+TuinDoomRPG THIRD_PARTY_NOTICES.md records the user-confirmed reuse permission.
+Doom Delta presentation and archive credited to the Doom Delta team.
+Podium illustration supplied by the user.

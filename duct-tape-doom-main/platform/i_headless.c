@@ -79,3 +79,11 @@ int I_RegisterSong(void *data) { (void)data; return 0; }
 void I_PlaySong(int handle, int looping) { (void)handle; (void)looping; }
 void I_StopSong(int handle) { (void)handle; }
 void I_UnRegisterSong(int handle) { (void)handle; }
+
+/* Camera placement is unavailable without the 3D renderer. */
+static float director_pitch;
+float I_DirectorPitch(void) { return director_pitch; }
+void I_DirectorSetPitch(float pitch) { director_pitch = pitch; }
+int I_DirectorPlace(float *out) { (void)out; return 0; }
+int I_TestDirectorClosePlacement(void) { return 0; }
+int I_TestDirectorNoBob(void) { return 0; }

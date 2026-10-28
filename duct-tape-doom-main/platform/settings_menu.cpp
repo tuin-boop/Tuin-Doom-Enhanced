@@ -33,6 +33,7 @@ struct Line { const OptionSection *section; Option *option; };
 struct Panel {
     bool open=false,wasPaused=false;
     int aiWarning=0;
+    bool binding=false;
     Settings draft,defaults; // defaults: as R sets them, for the per-option reset and marks
     std::vector<OptionTab> tabs;
     std::vector<Line> lines;
@@ -158,6 +159,7 @@ std::string clipped(std::string value,int pixels) {
 
 // Probe the same predicates used by controls, without changing the draft.
 std::string dependencyHint(const Option &option) {
+    if(option.arcadeLocked())return "Forced OFF for Arcade. Your normal setting is preserved.";
     std::string key=option.key?option.key:"";
     if(key.find("fluid_")==0&&!panel.draft.fluidWeapons)return "Enable FluidWeapons in Bundled mods first.";
     for(const auto &tab:panel.tabs)for(const auto &section:tab.sections)for(const auto &parent:section.options) {
@@ -236,6 +238,8 @@ std::vector<std::string> wrap(const std::string &string,int lineWidth,size_t max
 }
 
 std::string valueText(const Option &option) {
+    if(option.arcadeLocked())return "OFF (ARCADE)";
+    if(option.kind==OptionKind::Key)return panel.binding&&panel.lines[(size_t)panel.selected].option==&option?"PRESS KEY":*option.flag?SDL_GetScancodeName((SDL_Scancode)*option.flag):"UNBOUND";
     if(option.kind==OptionKind::Action)return "Start";
     if(option.kind==OptionKind::Check)return *option.flag?"On":"Off";
     if(option.kind==OptionKind::Choice) {
@@ -303,6 +307,7 @@ void changeOption(int direction) {
     Option &option=selectedOption();
     if(!option.isEnabled(panel.draft)) {S_StartSound(NULL,Game_MenuSound(GAME_MENU_DENY));return;}
     if(option.kind==OptionKind::Action){if(direction>0&&option.action)option.action();return;}
+    if(option.kind==OptionKind::Key){panel.binding=true;return;}
     if(option.kind==OptionKind::Check){
         *option.flag=!*option.flag;
         if(*option.flag){
@@ -353,6 +358,7 @@ void drawChangedMark(int row,bool enabled) {
 void I_Render3DSettingsMenu(void) {
     if(panel.open)return;
     panel.aiWarning=0;
+    panel.binding=false;
     panel.draft=settings;
     if(auto *window=SDL_GetKeyboardFocus())panel.draft.fullscreen=(SDL_GetWindowFlags(window)&SDL_WINDOW_FULLSCREEN)!=0;
     panel.defaults=Settings{};fitGame(panel.defaults);
@@ -368,6 +374,15 @@ int I_Render3DSettingsOpen(void) { return panel.open; }
 
 void I_Render3DSettingsKey(int scancode,int shift) {
     if(!panel.open)return;
+    if(panel.binding){
+        if(scancode==SDL_SCANCODE_ESCAPE){panel.binding=false;return;}
+        int code=(scancode==SDL_SCANCODE_DELETE||scancode==SDL_SCANCODE_BACKSPACE)?0:scancode;
+        if(code&&!validPeekBinding(code)){S_StartSound(NULL,Game_MenuSound(GAME_MENU_DENY));return;}
+        int *chosen=selectedOption().flag;
+        int *other=chosen==&panel.draft.peekLeft?&panel.draft.peekRight:&panel.draft.peekLeft;
+        if(code&&*other==code)*other=0;
+        *chosen=code;panel.binding=false;S_StartSound(NULL,Game_MenuSound(GAME_MENU_CHANGE));return;
+    }
     if(panel.aiWarning){panel.aiWarning=0;return;}
     switch(scancode) {
     case SDL_SCANCODE_UP: moveSelection(-1); break;
@@ -393,6 +408,7 @@ void I_Render3DSettingsKey(int scancode,int shift) {
 }
 
 void I_Render3DSettingsClick(int x,int y,int button) {
+    if(panel.binding)return;
     if(!panel.open||x<0||y<0||x>=width||y>=height)return;
     if(panel.aiWarning){if(button)panel.aiWarning=0;return;}
     int row=y/cellHeight;
@@ -510,6 +526,20 @@ extern "C" int I_TestSettingsControls(void) {
         }
         return false;
     };
+    if(!choose("peek_left"))return 0;
+    panel.draft.cornerPeek=panel.draft.accelerated=1;
+    panel.draft.peekLeft=SDL_SCANCODE_Z;panel.draft.peekRight=SDL_SCANCODE_C;
+    I_Render3DSettingsKey(SDL_SCANCODE_RETURN,0);
+    if(!panel.binding)return 0;
+    I_Render3DSettingsKey(SDL_SCANCODE_F4,0);
+    if(!panel.binding||panel.draft.peekLeft!=SDL_SCANCODE_Z)return 0;
+    I_Render3DSettingsKey(SDL_SCANCODE_C,0);
+    if(panel.binding||panel.draft.peekLeft!=SDL_SCANCODE_C||panel.draft.peekRight)return 0;
+    I_Render3DSettingsKey(SDL_SCANCODE_RETURN,0);I_Render3DSettingsKey(SDL_SCANCODE_ESCAPE,0);
+    if(panel.binding||!panel.open||panel.draft.peekLeft!=SDL_SCANCODE_C)return 0;
+    I_Render3DSettingsKey(SDL_SCANCODE_RETURN,0);I_Render3DSettingsKey(SDL_SCANCODE_DELETE,0);
+    if(panel.binding||panel.draft.peekLeft)return 0;
+    panel.draft.cornerPeek=0;changeOption(1);if(panel.binding)return 0;
     if(!choose("fluid_rocket_fire"))return 0;
     panel.draft.fluidWeapons=0;
     int value=panel.draft.fluidRocketFire;
@@ -532,7 +562,7 @@ extern "C" int I_TestSettingsControls(void) {
     I_Render3DSettingsKey(SDL_SCANCODE_F10,0);
     if(panel.open)return 0;
     I_Render3DSettingsMenu();
-    if(panel.draft.fluidRocketFire!=saved.fluidRocketFire||panel.draft.fluidGloves!=saved.fluidGloves)return 0;
+    if(panel.draft.fluidRocketFire!=saved.fluidRocketFire||panel.draft.fluidGloves!=saved.fluidGloves||panel.draft.peekLeft!=saved.peekLeft||panel.draft.peekRight!=saved.peekRight)return 0;
     I_Render3DSettingsClick(24,2*cellHeight+4,1);
     if(panel.tab!=0)return 0;
     I_Render3DSettingsKey(SDL_SCANCODE_END,0);

@@ -17,11 +17,13 @@ The Windows launcher includes the engine and the supplied FluidWeapons, FluidWea
 
 ## Latest update
 
-The October 26 release adds surface-coloured destruction, refined weapon impacts, liquid splashes, updated menu controls and native VoxelDoom support with environmental lighting and glowing eyes. Load VoxelDoom v2.4 separately through the launcher; it is not bundled. Voxel surface batching reduces geometry without reducing voxel colour detail.
+The October 28 release adds **Camera Director (F9)** with saved wall-camera layouts, per-level takes, replay and take deletion; an **Arcade / Hall of Fame** mode with per-level scores; a smoothly interpolated slow-motion weapon wheel; and Toasty once per level on a randomly chosen early gib. It also includes key pickup hands, helmet mugshots, HUD refinements and hold-to-peek controls.
+
+Surface-coloured destruction, refined weapon impacts, liquid splashes and native VoxelDoom support remain included. Load VoxelDoom v2.4 separately through the launcher; it is not bundled.
 
 Type `johnromerogod` for the optional sticky/drunken rocket cheat. Right-click launches 25 rockets along your aim before they begin wandering; child rockets never multiply. A shaking Doomguy popup and Toasty sound mark the toggle.
 
-[Full release notes](docs/changes/RELEASE-2026-10-26.md). Older releases remain in [release history](https://github.com/tuin-boop/Tuin-Doom-Enhanced/releases). Existing save/settings folder names are retained.
+[Full release notes](docs/changes/RELEASE-2026-10-28.md). Older releases remain in [release history](https://github.com/tuin-boop/Tuin-Doom-Enhanced/releases). Existing save/settings folder names are retained.
 
 Compatible classic/Boom map WADs are supported; arbitrary GZDoom/UDMF maps and general ZScript are not supported. Native voxel models do not implement the pack's scripts or sprite-specific deformation. Destruction can bypass map progression; performance depends on map complexity and accumulated damage.
 

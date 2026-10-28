@@ -924,3 +924,5 @@ void R_RenderPlayerView (player_t* player)
 }
 
 void (*R_BFGHit)(mobj_t *ball,mobj_t *victim)=0;
+
+int (*R_WheelSlowMotion)(void) = 0;

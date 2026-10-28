@@ -73,6 +73,8 @@ void I_Render3DProfileTeleported(void);
 void I_Render3DScreenshotTo(const char *path);
 int I_Render3DWheelOpen(void);
 void I_Render3DWheelKey(int down);
+int I_Render3DPeekKey(int scancode,int down);
+void I_Render3DPeekReset(void);
 void I_Render3DWheelMove(float x,float y);
 #ifdef __cplusplus
 }

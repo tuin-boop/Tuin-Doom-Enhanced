@@ -1,8 +1,9 @@
+#include "m_arcade.h"
 /* Bounded, opt-in species tactics. All actual movement goes through P_Move. */
 int p_advancedtactics;
 typedef struct {mobj_t *actor;int decision,until,dir,side,shots,seen,burst,burstAfter,press;fixed_t x,y,z,lockx,locky,lockz;int lockUntil,chargeRetry;boolean visible,hold;} tactic_t;
 static tactic_t tactics[1024];static unsigned tacticsSerial;static int tacticsBudget=-1;
-boolean P_TacticsEnabled(void){return p_advancedtactics&&!demoplayback&&!demorecording&&!netgame;}
+boolean P_TacticsEnabled(void){return !arcade_active&&p_advancedtactics&&!demoplayback&&!demorecording&&!netgame;}
 void P_SetAdvancedTactics(int enabled){if(enabled!=p_advancedtactics){memset(tactics,0,sizeof(tactics));tacticsBudget=-1;}p_advancedtactics=enabled;}
 static tactic_t *P_TacticData(mobj_t *actor){
     if(tacticsSerial!=r_levelserial){memset(tactics,0,sizeof(tactics));tacticsSerial=r_levelserial;tacticsBudget=-1;}

@@ -2,13 +2,18 @@
    glass reflections, depth for the mist, the main view with mist and overlays,
    bloom), then presented with the HUD and the settings panel. */
 #include "internal.h"
+extern "C" int Arcade_PodiumRect(float*);
+extern "C" int Arcade_MenuOpen(void);
+extern "C" int director_view_active;
+namespace doom3d {extern GpuTextureRef arcadeRankTexture;}
 
 namespace gpu3d {
 // The in-game settings panel: a quad over the whole drawable whose texture
 // coordinates place the 640x400 image at a whole-pixel scale in the middle;
 // beyond it the clamped border texels dim the view.
 static std::vector<Vertex> settingsQuad;
-static std::vector<Vertex> toastyQuad,romeroQuad;
+static std::vector<Vertex> toastyQuad,romeroQuad,arcadePodiumQuad;
+static std::vector<Vertex> arcadeRankQuad;
 static float settingsOrigin[2]={},settingsScale=1;
 static void present(SDL_GPUCommandBuffer *command,SDL_GPUTexture *target,const FrameView &view) {
     SDL_GPUColorTargetInfo info={};
@@ -31,6 +36,16 @@ static void present(SDL_GPUCommandBuffer *command,SDL_GPUTexture *target,const F
         SDL_BindGPUGraphicsPipeline(pass,settingsPipeline);
         SDL_GPUTextureSamplerBinding portrait={gpu(romeroTexture),linearClamp};
         SDL_BindGPUFragmentSamplers(pass,0,&portrait,1);drawVertices(pass,romeroQuad);
+    }
+    if(!arcadePodiumQuad.empty()&&arcadePodiumTexture){
+        SDL_BindGPUGraphicsPipeline(pass,settingsPipeline);
+        SDL_GPUTextureSamplerBinding art={gpu(arcadePodiumTexture),linearClamp};
+        SDL_BindGPUFragmentSamplers(pass,0,&art,1);drawVertices(pass,arcadePodiumQuad);
+    }
+    if(!arcadeRankQuad.empty()&&arcadeRankTexture){
+        SDL_BindGPUGraphicsPipeline(pass,settingsPipeline);
+        SDL_GPUTextureSamplerBinding lettering={gpu(arcadeRankTexture),nearestClamp};
+        SDL_BindGPUFragmentSamplers(pass,0,&lettering,1);drawVertices(pass,arcadeRankQuad);
     }
     if(!settingsQuad.empty()) {
         SDL_BindGPUGraphicsPipeline(pass,settingsPipeline);
@@ -426,7 +441,7 @@ void I_Render3DPresent(const unsigned *pixels,const unsigned *palette) {
     bool msaa=sampleCount!=SDL_GPU_SAMPLECOUNT_1;
     // Transient quads join the frame upload; textures created while drawing
     // go through the upload command buffer, which is submitted first.
-    std::vector<SpriteDraw> weapons;if(worldPending)weapons=weaponDraws(camera);
+    std::vector<SpriteDraw> weapons;if(worldPending&&!director_view_active)weapons=weaponDraws(camera);
     // Keep the original weapon scale, but allow its artwork outside the 4:3
     // UI rectangle. A full scissor alone cannot undo clip-space clipping.
     for(auto &draw:weapons)for(auto &v:draw.vertices)
@@ -441,8 +456,28 @@ void I_Render3DPresent(const unsigned *pixels,const unsigned *palette) {
             2*(edges[group+1]-edges[group])/320,2,edges[group]/320,.5f,edges[group+1]/320,1);
     }
     for(auto &v:hud)v.x=(v.x*view.uiWidth+2*view.uiX+view.uiWidth-width)/width;
-    std::vector<Vertex> cross=crosshairVertices(view.worldW,view.worldH);
+    std::vector<Vertex> cross;if(!director_view_active)cross=crosshairVertices(view.worldW,view.worldH);
     std::vector<const std::vector<Vertex>*> transient={&hud,&cross};
+    arcadeRankQuad.clear();
+    if(Arcade_MenuOpen()&&arcadeRankTexture){
+        // Composite after palette/post-processing so purple stays purple.
+        screenQuad(arcadeRankQuad,2*view.uiX/width-1,1-2*view.uiY/height,
+            2*view.uiWidth/width,2*view.uiHeight/height,0,0,1,1);
+        transient.push_back(&arcadeRankQuad);
+    }
+    arcadePodiumQuad.clear();float artRect[4];
+    if(arcadePodiumTexture&&Arcade_PodiumRect(artRect)){
+        // Logical menu coordinates locate the box; fit the original aspect
+        // in physical pixels, then composite after the low-resolution HUD.
+        float x=(view.uiX+artRect[0]*view.uiWidth/320)/width;
+        float y=(view.uiY+artRect[1]*view.uiHeight/200)/height;
+        float bw=artRect[2]*view.uiWidth/320/width*drawableWidth;
+        float bh=artRect[3]*view.uiHeight/200/height*drawableHeight;
+        float aw=std::min(bw,bh*1.5f),ah=aw/1.5f;
+        x+=(bw-aw)*.5f/drawableWidth;y+=(bh-ah)*.5f/drawableHeight;
+        screenQuad(arcadePodiumQuad,x*2-1,1-y*2,aw*2/drawableWidth,ah*2/drawableHeight,0,0,1,1);
+        transient.push_back(&arcadePodiumQuad);
+    }
     romeroQuad.clear();
     if(romeroAge>=0 && romeroTexture){
         float t=romeroAge,rise=std::clamp(t/.15f,0.f,1.f),fly=std::clamp((t-.65f)/.6f,0.f,1.f);

@@ -1,3 +1,4 @@
+#include "m_arcade.h"
 /* Optional attack tactics; transient state deliberately stays out of saves. */
 int p_aggressiveai;
 extern int p_fluidfastpistol;
@@ -11,7 +12,7 @@ void P_SetAggressiveAI(int enabled){
     if(p_aggressiveai!=enabled){memset(aggressiveActors,0,sizeof(aggressiveActors));memset(aggressiveShots,0,sizeof(aggressiveShots));aggressiveSerial=r_levelserial;}
     p_aggressiveai=enabled;
 }
-boolean P_AggressiveEnabled(void){return p_aggressiveai&&!demoplayback&&!demorecording&&!netgame;}
+boolean P_AggressiveEnabled(void){return !arcade_active&&p_aggressiveai&&!demoplayback&&!demorecording&&!netgame;}
 static void P_AggressiveReset(void){if(aggressiveSerial!=r_levelserial){memset(aggressiveActors,0,sizeof(aggressiveActors));memset(aggressiveShots,0,sizeof(aggressiveShots));aggressiveSerial=r_levelserial;}}
 static aggressive_t *P_AggressiveData(mobj_t *actor){
     P_AggressiveReset();

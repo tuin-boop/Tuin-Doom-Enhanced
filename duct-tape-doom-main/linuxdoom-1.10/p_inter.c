@@ -1,3 +1,4 @@
+#include "m_arcade.h"
 // Emacs style mode select   -*- C++ -*- 
 //-----------------------------------------------------------------------------
 //
@@ -54,7 +55,8 @@ rcsid[] = "$Id: p_inter.c,v 1.4 1997/02/03 22:45:11 b1 Exp $";
 unsigned p_toasty_serial;
 int p_toasty_tic;
 int p_toasty_preview;
-static uint32_t toasty_random=0x746f6173u;
+static doom_toasty_state toasty_state={0x746f6173u};
+extern unsigned r_levelserial;
 
 
 #define BONUSADD	6
@@ -687,6 +689,7 @@ P_TouchSpecialThing
     }
     if (special->flags & MF_COUNTITEM)
 	player->itemcount++;
+    Arcade_Pickup(player,special);
     P_RemoveMobj (special);
     player->bonuscount += BONUSADD;
     if (player == &players[consoleplayer])
@@ -705,6 +708,7 @@ P_KillMobj
     mobjtype_t	item;
     mobj_t*	mo;
 	
+    Arcade_Kill(source,target);
     target->flags &= ~(MF_SHOOTABLE|MF_FLOAT|MF_SKULLFLY);
 
     if (target->type != MT_SKULL)
@@ -753,7 +757,7 @@ P_KillMobj
 	&& target->info->xdeathstate)
     {
 	P_SetMobjState (target, target->info->xdeathstate);
-        if(!target->player && (target->info->flags&MF_COUNTKILL) && doom_toasty_roll(&toasty_random)) {
+        if(!target->player && (target->info->flags&MF_COUNTKILL) && doom_toasty_gib(&toasty_state,r_levelserial)) {
             p_toasty_tic=leveltime;
             ++p_toasty_serial;
         }
@@ -930,6 +934,8 @@ P_DamageMobj
     
     // do the damage	
     P_AggressiveDamage(target,inflictor,source,damage);
+    if(damage>0)Arcade_Impact(inflictor,source,target);
+    Arcade_Damage(source,target,damage);
     target->health -= damage;	
     if (target->health <= 0)
     {

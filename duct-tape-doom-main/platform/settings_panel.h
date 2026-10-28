@@ -7,11 +7,14 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
+extern "C" int arcade_active;
 #include <vector>
 #include "scene3d.h"
 
 namespace doom3d {
-enum class OptionKind { Check, Choice, Slider, Action };
+enum class OptionKind { Check, Choice, Slider, Action, Key };
+bool validPeekBinding(int scancode);
 // Whether an option has an effect with the other settings as they are.
 using OptionCondition=bool(*)(const Settings&);
 struct Option {
@@ -25,7 +28,8 @@ struct Option {
     double low=0,high=1,step=0.05;
     OptionCondition enabled=nullptr;
     void (*action)()=nullptr;
-    bool isEnabled(const Settings &s) const {return !enabled||enabled(s);}
+    bool arcadeLocked() const {return arcade_active&&key&&(!strcmp(key,"advanced_tactics")||!strcmp(key,"aggressive_ai")||!strcmp(key,"persistent_pursuit")||!strcmp(key,"mod_fluid_monsters"));}
+    bool isEnabled(const Settings &s) const {return !arcadeLocked()&&(!enabled||enabled(s));}
     // Slider: value moved onto the nearest step within range.
     float snap(double value) const {return (float)std::clamp(low+std::round((value-low)/step)*step,low,high);}
 };

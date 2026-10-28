@@ -34,6 +34,7 @@ rcsid[] = "$Id: p_tick.c,v 1.4 1997/02/03 16:47:55 b1 Exp $";
 #include "p_solid.h"
 
 #include "doomstat.h"
+#include "r_state.h"
 
 
 int	leveltime;
@@ -145,7 +146,12 @@ void P_RunThinkers (void)
 void P_Ticker (void)
 {
     int		i;
-    
+
+    static unsigned wheelTicks;
+    if(!netgame&&!demorecording&&!demoplayback&&!menuactive&&!paused&&R_WheelSlowMotion&&R_WheelSlowMotion()){
+        if(++wheelTicks%20)return; /* 5% simulation speed; input/render remain responsive. */
+    }else wheelTicks=0;
+
     // run the tic
     if (paused)
 	return;
@@ -160,6 +166,7 @@ void P_Ticker (void)
     }
     
 		
+    if (R_BeforeTic) R_BeforeTic();
     for (i=0 ; i<MAXPLAYERS ; i++)
 	if (playeringame[i])
 	    P_PlayerThink (&players[i]);

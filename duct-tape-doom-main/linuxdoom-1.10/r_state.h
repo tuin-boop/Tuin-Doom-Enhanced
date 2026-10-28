@@ -170,3 +170,5 @@ extern void (*R_BFGHit)(mobj_t *ball,mobj_t *victim);
 // $Log:$
 //
 //-----------------------------------------------------------------------------
+
+extern int (*R_WheelSlowMotion)(void);

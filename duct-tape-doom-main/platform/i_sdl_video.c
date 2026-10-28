@@ -194,6 +194,9 @@ void I_StartTic(void)
             if(accel&&I_Render3DWheelOpen()&&event.type==SDL_EVENT_KEY_DOWN&&
                 (scan==SDL_SCANCODE_ESCAPE||scan==SDL_SCANCODE_F4||scan==SDL_SCANCODE_PAUSE))I_Render3DWheelKey(-1);
 #endif
+ #ifdef DOOM_RENDER3D
+            if(accel&&I_Render3DPeekKey(scan,event.type==SDL_EVENT_KEY_DOWN))continue;
+ #endif
             if (scan == SDL_SCANCODE_F11)
             {
                 if (event.type == SDL_EVENT_KEY_DOWN)
@@ -242,6 +245,7 @@ void I_StartTic(void)
         {
 #ifdef DOOM_RENDER3D
             if(accel)I_Render3DWheelKey(-1);
+            if(accel)I_Render3DPeekReset();
 #endif
             for (int i = 0; i < SDL_SCANCODE_COUNT; ++i)
                 if (keys[i]) { post(ev_keyup, keys[i], 0, 0); keys[i] = 0; }
@@ -321,3 +325,13 @@ void I_ReadScreen(byte *screen)
 {
     memcpy(screen, screens[0], SCREENWIDTH * SCREENHEIGHT);
 }
+
+#ifndef DOOM_RENDER3D
+/* Camera placement is unavailable without the 3D renderer. */
+static float director_pitch;
+float I_DirectorPitch(void) { return director_pitch; }
+void I_DirectorSetPitch(float pitch) { director_pitch = pitch; }
+int I_DirectorPlace(float *out) { (void)out; return 0; }
+int I_TestDirectorClosePlacement(void) { return 0; }
+int I_TestDirectorNoBob(void) { return 0; }
+#endif

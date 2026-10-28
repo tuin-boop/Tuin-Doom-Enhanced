@@ -1,3 +1,4 @@
+#include "m_arcade.h"
 #include "p_notices.h"
 #include "g_mapinfo.h"
 // Emacs style mode select   -*- C++ -*- 
@@ -129,7 +130,23 @@ int             gametic;
 int             levelstarttic;          // gametic at level start 
 int             totalkills, totalitems, totalsecret;    // for intermission 
  
-char            demoname[32]; 
+char            demoname[32];
+int director_demo=0;
+static int director_record_pending=0;
+static char director_take[28];
+extern float I_DirectorPitch(void);
+extern void I_DirectorSetPitch(float);
+extern void Director_DemoEnded(int);
+extern void Director_LevelExit(void);
+void G_DirectorRecord(const char *name){
+    snprintf(director_take,sizeof(director_take),"%s",name);
+    director_record_pending=1;G_DeferedInitNew(gameskill,gameepisode,gamemap);
+}
+void G_DirectorPlay(const char *name){
+    snprintf(director_take,sizeof(director_take),"%s",name);
+    director_demo=1;G_DeferedPlayDemo(director_take);
+}
+
 boolean         demorecording; 
 boolean         demoplayback; 
 boolean		netdemo; 
@@ -671,6 +688,7 @@ void G_Ticker (void)
 	} 
     }
     
+    if(director_demo&&menuactive)return;
     // get commands, check consistancy,
     // and build new consistancy check
     buf = (gametic/ticdup)%BACKUPTICS; 
@@ -1040,7 +1058,9 @@ void G_SecretExitLevel (void)
 } 
  
 void G_DoCompleted (void) 
-{ 
+{
+    if(director_demo){G_CheckDemoStatus();Director_LevelExit();return;}
+    if(Arcade_Finish(1))return;
     int             i; 
 	 
     gameaction = ga_nothing; 
@@ -1227,7 +1247,8 @@ void G_LoadGame (char* name)
 
 
 void G_DoLoadGame (void) 
-{ 
+{
+    Arcade_Cancel();
     int		length; 
     int		i; 
     int		a,b,c; 
@@ -1442,7 +1463,8 @@ void G_DoNewGame (void)
     fastparm = false;
     nomonsters = false;
     consoleplayer = 0;
-    G_InitNew (d_skill, d_episode, d_map); 
+    G_InitNew (d_skill, d_episode, d_map);
+    if(director_record_pending){director_record_pending=0;director_demo=1;G_RecordDemo(director_take);G_BeginRecording();}
     gameaction = ga_nothing; 
 } 
 
@@ -1457,6 +1479,7 @@ G_InitNew
   int		map ) 
 { 
     int             i;
+    Arcade_NewGame();
     P_NoticeNewGame(); 
 	 
     if (paused) 
@@ -1580,12 +1603,21 @@ G_InitNew
 
 void G_ReadDemoTiccmd (ticcmd_t* cmd) 
 { 
+    if(director_demo && (demo_p>=demoend || (*demo_p!=DEMOMARKER && demoend-demo_p<9))){
+        memset(cmd,0,sizeof(*cmd));G_CheckDemoStatus();return;
+    }
     if (*demo_p == DEMOMARKER) 
     {
+        if(director_demo)memset(cmd,0,sizeof(*cmd));
 	// end of demo data stream 
 	G_CheckDemoStatus (); 
 	return; 
     } 
+    if(director_demo){
+        cmd->forwardmove=(signed char)*demo_p++;cmd->sidemove=(signed char)*demo_p++;
+        cmd->angleturn=(short)(demo_p[0]|demo_p[1]<<8);demo_p+=2;cmd->buttons=*demo_p++;
+        float look;memcpy(&look,demo_p,4);demo_p+=4;I_DirectorSetPitch(look);return;
+    }
     cmd->forwardmove = ((signed char)*demo_p++); 
     cmd->sidemove = ((signed char)*demo_p++); 
     cmd->angleturn = ((unsigned char)*demo_p++)<<8; 
@@ -1595,6 +1627,12 @@ void G_ReadDemoTiccmd (ticcmd_t* cmd)
 
 void G_WriteDemoTiccmd (ticcmd_t* cmd) 
 { 
+    if(director_demo){
+        if(demo_p>demoend-16){G_CheckDemoStatus();return;}
+        *demo_p++=cmd->forwardmove;*demo_p++=cmd->sidemove;
+        *demo_p++=cmd->angleturn&255;*demo_p++=(cmd->angleturn>>8)&255;*demo_p++=cmd->buttons;
+        float look=I_DirectorPitch();memcpy(demo_p,&look,4);demo_p+=4;return;
+    }
     if (gamekeydown['q'])           // press q to end demo recording 
 	G_CheckDemoStatus (); 
     *demo_p++ = cmd->forwardmove; 
@@ -1625,7 +1663,7 @@ void G_RecordDemo (char* name)
     usergame = false; 
     strcpy (demoname, name); 
     strcat (demoname, ".lmp"); 
-    maxsize = 0x20000;
+    maxsize = director_demo?16*1024*1024:0x20000;
     i = M_CheckParm ("-maxdemo");
     if (i && i<myargc-1)
 	maxsize = atoi(myargv[i+1])*1024;
@@ -1642,7 +1680,7 @@ void G_BeginRecording (void)
 		
     demo_p = demobuffer;
 	
-    *demo_p++ = VERSION;
+    *demo_p++ = director_demo?223:VERSION;
     *demo_p++ = gameskill; 
     *demo_p++ = gameepisode; 
     *demo_p++ = gamemap; 
@@ -1675,10 +1713,13 @@ void G_DoPlayDemo (void)
     int             i, episode, map; 
 	 
     gameaction = ga_nothing; 
-    demobuffer = demo_p = W_CacheLumpName (defdemoname, PU_STATIC); 
+    if(director_demo){
+        int length=M_ReadFile(defdemoname,&demobuffer);demo_p=demobuffer;demoend=demobuffer+length;
+        if(length<14||*demo_p!=223){Z_Free(demobuffer);director_demo=0;Director_DemoEnded(0);return;}
+    }else demobuffer = demo_p = W_CacheLumpName (defdemoname, PU_STATIC);
     int demo_version = *demo_p++;
     /* DOS 1.9 and the Linux release use the same demo command format. */
-    if (demo_version != 109 && demo_version != VERSION)
+    if (demo_version != 109 && demo_version != VERSION && !(director_demo && demo_version==223))
     {
       fprintf( stderr, "Demo is from a different game version!\n");
       gameaction = ga_nothing;
@@ -1742,6 +1783,13 @@ boolean G_CheckDemoStatus (void)
 { 
     int             endtime; 
 	 
+    if(director_demo && (demorecording||demoplayback)){
+        int saved=1;
+        if(demorecording){*demo_p++=DEMOMARKER;saved=M_WriteFile(demoname,demobuffer,demo_p-demobuffer);}
+        Z_Free(demobuffer);demobuffer=demo_p=demoend=NULL;
+        demorecording=demoplayback=false;director_demo=0;usergame=true;
+        memset(gamekeydown,0,sizeof(gamekeydown));Director_DemoEnded(saved);return true;
+    }
     if (timingdemo) 
     { 
 	endtime = I_GetTime (); 

@@ -63,6 +63,7 @@ rcsid[] = "$Id: m_menu.c,v 1.7 1997/02/03 22:45:10 b1 Exp $";
 #include "sounds.h"
 
 #include "m_menu.h"
+#include "m_arcade.h"
 #include "d_deh.h"
 
 // p_user.c; p_local.h clashes with <fcntl.h> here.
@@ -260,7 +261,7 @@ menuitem_t MainMenu[]=
     {1,"M_LOADG",M_LoadGame,'l'},
     {1,"M_SAVEG",M_SaveGame,'s'},
     // Another hickup with Special edition.
-    {1,"M_RDTHIS",M_ReadThis,'r'},
+    {1,"",Arcade_Open,'h'},
     {1,"M_QUITG",M_QuitDOOM,'q'}
 };
 
@@ -657,6 +658,7 @@ void M_LoadSelect(int choice)
 //
 void M_LoadGame (int choice)
 {
+    if(arcade_active)return;
     if (netgame)
     {
 	M_StartMessage(DEH_String (LOADNET),NULL,false);
@@ -722,6 +724,7 @@ void M_SaveSelect(int choice)
 //
 void M_SaveGame (int choice)
 {
+    if(arcade_active)return;
     if (!usergame)
     {
 	M_StartMessage(DEH_String (SAVEDEAD),NULL,false);
@@ -756,6 +759,7 @@ void M_QuickSaveResponse(int ch)
 
 void M_QuickSave(void)
 {
+    if(arcade_active)return;
     if (!usergame)
     {
 	S_StartSound(NULL,sfx_oof);
@@ -799,6 +803,7 @@ void M_QuickLoadResponse(int ch)
 
 void M_QuickLoad(void)
 {
+    if(arcade_active)return;
     if (netgame)
     {
 	M_StartMessage(DEH_String (QLOADNET),NULL,false);
@@ -1423,6 +1428,9 @@ M_WriteText
 // CONTROL PANEL
 //
 
+ #include "m_arcade_impl.h"
+#include "m_director_impl.h"
+
 //
 // M_Responder
 //
@@ -1437,6 +1445,8 @@ boolean M_Responder (event_t* ev)
     static  int     mousex = 0;
     static  int     lastx = 0;
 	
+    if(director_input(ev))return true;
+    if(arcade_screen){if(ev->type==ev_keydown)arcade_key(ev->data1);return true;}
     ch = -1;
 	
     if (ev->type == ev_joystick && joywait < I_GetTime())
@@ -1951,6 +1961,7 @@ void M_Drawer (void)
     char		string[256];
 
     inhelpscreens = false;
+    arcade_draw();if(arcade_screen)return;director_draw();if(director_menu)return;
 
     
     // Horiz. & Vertically center string and print it.
@@ -1995,6 +2006,7 @@ void M_Drawer (void)
 
     for (i=0;i<max;i++)
     {
+        if(currentMenu==&MainDef&&i==readthis)arcade_main_label(x,y);
 	if (currentMenu->menuitems[i].name[0])
 	    V_DrawPatchDirect (x,y,0,
 			       W_CacheLumpName(currentMenu->menuitems[i].name ,PU_CACHE));
@@ -2037,6 +2049,7 @@ void M_SetupNextMenu(menu_t *menudef)
 //
 void M_Ticker (void)
 {
+    arcade_tick();director_tick();
     if (--skullAnimCounter <= 0)
     {
 	whichSkull ^= 1;
@@ -2071,8 +2084,8 @@ void M_Init (void)
 	// This is used because DOOM 2 had only one HELP
         //  page. I use CREDIT as second page now, but
 	//  kept this hack for educational purposes.
-	MainMenu[readthis] = MainMenu[quitdoom];
-	MainDef.numitems--;
+	/* Keep the arcade entry in Doom II too. */
+	/* six main menu entries */
 	MainDef.y += 8;
 	NewDef.prevMenu = &MainDef;
 	ReadDef1.routine = M_DrawReadThis1;

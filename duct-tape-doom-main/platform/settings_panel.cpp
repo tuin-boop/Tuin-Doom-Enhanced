@@ -12,6 +12,18 @@ extern "C" {
 #include "game_profile.h"
 
 namespace doom3d {
+bool validPeekBinding(int code) {
+    if(code<=SDL_SCANCODE_UNKNOWN||code>=SDL_SCANCODE_COUNT)return false;
+    switch(code){
+    case SDL_SCANCODE_ESCAPE:case SDL_SCANCODE_Q:case SDL_SCANCODE_F:
+    case SDL_SCANCODE_PAUSE:case SDL_SCANCODE_F1:case SDL_SCANCODE_F2:
+    case SDL_SCANCODE_F3:case SDL_SCANCODE_F4:case SDL_SCANCODE_F5:
+    case SDL_SCANCODE_F6:case SDL_SCANCODE_F7:case SDL_SCANCODE_F8:
+    case SDL_SCANCODE_F9:case SDL_SCANCODE_F10:case SDL_SCANCODE_F11:
+    case SDL_SCANCODE_F12:return false;
+    default:return *SDL_GetScancodeName((SDL_Scancode)code)!=0;
+    }
+}
 namespace {
 const char *solidMapText(const char* mapped,const char* legacy){
     return M_CheckParm((char*)"-solidmaps")?mapped:legacy;
@@ -98,6 +110,8 @@ std::vector<OptionTab> optionTabs(Settings &s) {
                     "they follow the view. Off: they go exactly where you look, so you can miss, and where you hit is where the "
                     "wound and the fall come from. Rockets, plasma and the BFG aim as in DOOM either way.",hasFreeAim),
                 check("crosshair","Crosshair",&s.crosshair,"A small crosshair in the middle of the view."),
+                check("key_pickup_hands","Key pickup hands",&s.keyPickupHands,"Quickly lower your weapon and show the collected keycard or skull. Firing cancels the animation.",[](const Settings &d){return d.accelerated!=0;}),
+                choice("helmet_face","Doomguy portrait",&s.helmetFace,{"Original","Silver helmet","Tan helmet","Silver helmet 2.0","Tan helmet 2.0"},{0,3,4,1,2},"Optional Boxart Doomguy helmets. Silver/Tan use the original artwork; 2.0 has the revised visor and faceplate. Works with classic and modern HUDs; keeps all 42 face states, including damage, turns, god mode and death."),
                 check("combat_notices","Combat achievements",&s.combatNotices,"Show close calls, multi-kills, barrel chains, fist kills and perfect clears. Boss, pickup and secret messages stay enabled."),
                 check("fps","Show FPS and frame time",&s.fps,"Fullscreen counter: FPS, average frame time and the slowest frame in the last second. FPS also appears in the window title.")}},
             {"Saving",{
@@ -497,6 +511,14 @@ std::vector<OptionTab> optionTabs(Settings &s) {
         }
     }
     if(!combat.sections.empty())tabs.insert(tabs.begin()+3,std::move(combat));
+    auto key=[&](const char *name,const char *title,int *value){
+        Option option{};option.kind=OptionKind::Key;option.key=name;option.title=title;option.flag=value;
+        option.tip="Press Enter, then a key. Escape cancels; Delete clears. Choose an unused key. Q, F and function keys are reserved. Hold to peek; release to return to center.";
+        option.enabled=[](const Settings &d){return d.accelerated&&d.cornerPeek;};return option;
+    };
+    tabs.push_back({"Controls",{{"Corner peeking",{
+        check("corner_peek","Corner peeking",&s.cornerPeek,"Hold the left/right peek keys to lean around a corner with a gentle 12-degree view tilt; release to return. Walls stop the camera. Shots originate from the collision-checked leaning view, keeping the crosshair centered. Disabled in demos and multiplayer.",[](const Settings &d){return d.accelerated!=0;}),
+        key("peek_left","Peek left",&s.peekLeft),key("peek_right","Peek right",&s.peekRight)}}}});
     return tabs;
 }
 
@@ -520,6 +542,7 @@ void readOption(Settings &s,const char *key,double value) {
     eachOption(s,[&](Option &option) {
         if(strcmp(option.key,key))return;
         if(option.kind==OptionKind::Check)*option.flag=value!=0;
+        else if(option.kind==OptionKind::Key){if(value==0||(value==std::floor(value)&&value>0&&value<SDL_SCANCODE_COUNT&&validPeekBinding((int)value)))*option.flag=(int)value;}
         else if(option.kind==OptionKind::Choice) {for(int v:option.values)if(v==value)*option.flag=v;}
         else *option.number=option.snap(value);
     });

@@ -1,3 +1,4 @@
+#include "m_arcade.h"
 #include <time.h>
 /* Optional local obstacle navigation. Bounded work, no changes to actor/save
    layout, and no random-number consumption when disabled. */
@@ -104,7 +105,7 @@ static boolean P_PlanPursuit(mobj_t *actor,pursuit_t *route)
 }
 boolean P_PersistentPursuit(mobj_t *actor)
 {
-    if(!p_persistentpursuit||demoplayback||demorecording||netgame||!actor->target
+    if(arcade_active||!p_persistentpursuit||demoplayback||demorecording||netgame||!actor->target
        ||!(actor->flags&MF_COUNTKILL)||(actor->flags&(MF_SKULLFLY|MF_MISSILE))||P_Unseen(actor->target))return false;
     if(pursuitSerial!=r_levelserial){memset(pursuit,0,sizeof(pursuit));pursuitSerial=r_levelserial;pursuitBudgetTic=-100;pursuitSearchActor=NULL;}
     if(pursuitSearchActor&&leveltime-pursuitLastWork>TICRATE)pursuitSearchActor=NULL;

@@ -1,3 +1,4 @@
+#include "m_arcade.h"
 /* Native adaptation of the supplied FluidMonsters FluidWalk mixin.
  * Transient substeps stay outside mobj_t so existing saves remain readable.
  * AI actions run once at state entry; only collision-checked walking repeats. */
@@ -30,7 +31,7 @@ extern fixed_t tmdropoffz;
 static unsigned bucket(mobj_t *actor){return (unsigned)((uintptr_t)actor>>4)&1023;}
 int p_fluidweapons=1,p_fluidmonsters=1;
 int P_FluidWeaponsEnabled(void){return p_fluidweapons&&M_CheckParm("-fluidweapons");}
-int P_FluidEnabled(void){return p_fluidmonsters&&M_CheckParm("-fluidmonsters")&&!demoplayback&&!demorecording&&!netgame;}
+int P_FluidEnabled(void){return !arcade_active&&p_fluidmonsters&&M_CheckParm("-fluidmonsters")&&!demoplayback&&!demorecording&&!netgame;}
 static int supported(mobj_t *actor){
     switch(actor->type){
     case MT_POSSESSED:case MT_SHOTGUY:case MT_CHAINGUY:case MT_WOLFSS:

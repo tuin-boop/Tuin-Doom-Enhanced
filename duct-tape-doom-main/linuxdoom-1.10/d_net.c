@@ -747,7 +747,6 @@ void TryRunTics (void)
 	    if (advancedemo)
 		D_DoAdvanceDemo ();
 	    M_Ticker ();
-            if (R_BeforeTic) R_BeforeTic();
 	    G_Ticker ();
 	    gametic++;
 	    

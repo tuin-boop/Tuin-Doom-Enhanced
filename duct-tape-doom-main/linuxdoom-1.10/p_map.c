@@ -208,6 +208,40 @@ static boolean P_EscapeSpawnWall(line_t *ld)
     // Never cross the line, only retreat from an already intersecting wall.
     return (old>0&&next>old)||(old<0&&next<old);
 }
+
+static double P_LedgeDistanceSquared(line_t *line, fixed_t x, fixed_t y)
+{
+    double dx=line->dx,dy=line->dy;
+    double px=(double)x-line->v1->x,py=(double)y-line->v1->y;
+    double length=dx*dx+dy*dy;
+    double t=length>0?(px*dx+py*dy)/length:0;
+    if(t<0)t=0;else if(t>1)t=1;
+    px-=t*dx;py-=t*dy;
+    return px*px+py*py;
+}
+
+// A large monster can overlap several elevated tiers after falling. The
+// adjacent sectors of a distant edge need not include its actual lower room.
+// Permit only increasing separation from an already overlapped finite edge.
+static boolean P_EscapeLedge(line_t *line)
+{
+    fixed_t box[4];
+    sector_t *room=tmthing->subsector->sector;
+    sector_t *dest=R_PointInSubsector(tmx,tmy)->sector;
+    if(demoplayback||demorecording||netgame||!(tmthing->flags&MF_COUNTKILL)
+       ||(tmthing->flags&(MF_MISSILE|MF_SKULLFLY))||tmthing->health<=0)return false;
+    if(room->floorheight>tmthing->z||dest->floorheight>tmthing->z
+       ||room->ceilingheight-tmthing->z<tmthing->height
+       ||dest->ceilingheight-tmthing->z<tmthing->height)return false;
+    box[BOXLEFT]=tmthing->x-tmthing->radius;box[BOXRIGHT]=tmthing->x+tmthing->radius;
+    box[BOXBOTTOM]=tmthing->y-tmthing->radius;box[BOXTOP]=tmthing->y+tmthing->radius;
+    if(box[BOXRIGHT]<=line->bbox[BOXLEFT]||box[BOXLEFT]>=line->bbox[BOXRIGHT]
+       ||box[BOXTOP]<=line->bbox[BOXBOTTOM]||box[BOXBOTTOM]>=line->bbox[BOXTOP]
+       ||P_BoxOnLineSide(box,line)!=-1)return false;
+    if(P_PointOnLineSide(tmthing->x,tmthing->y,line)!=P_PointOnLineSide(tmx,tmy,line))return false;
+    return P_LedgeDistanceSquared(line,tmx,tmy)>
+           P_LedgeDistanceSquared(line,tmthing->x,tmthing->y);
+}
 boolean PIT_CheckLine (line_t* ld)
 {
     if (tmbbox[BOXRIGHT] <= ld->bbox[BOXLEFT]
@@ -262,12 +296,7 @@ boolean PIT_CheckLine (line_t* ld)
     // A monster can fall beside a ledge with its radius still overlapping
     // the upper sector. Let it retreat on the low side instead of requiring
     // a step up onto that ledge for every attempted direction.
-    if(openbottom-tmthing->z>24*FRACUNIT&&P_EscapeSpawnWall(ld)){
-        int side=P_PointOnLineSide(tmthing->x,tmthing->y,ld);
-        sector_t *room=side?ld->backsector:ld->frontsector;
-        if(room->floorheight==lowfloor&&room->floorheight<=tmthing->z
-           &&room->ceilingheight-tmthing->z>=tmthing->height)goto solid_special;
-    }
+    if(openbottom-tmthing->z>24*FRACUNIT&&P_EscapeLedge(ld))goto solid_special;
 
     // adjust floor / ceiling heights
     if (opentop < tmceilingz)
@@ -1277,21 +1306,32 @@ boolean PTR_ShootTraverse (intercept_t* in)
 //
 // P_AimLineAttack
 //
+int (*P_PeekOriginHook)(mobj_t*,fixed_t*,fixed_t*,fixed_t*)=NULL;
+boolean P_PeekShotOrigin(mobj_t *actor, fixed_t *x, fixed_t *y, fixed_t *z)
+{
+    return P_PeekOriginHook && P_PeekOriginHook(actor,x,y,z);
+}
+
 fixed_t
 P_AimLineAttack
 ( mobj_t*	t1,
   angle_t	angle,
   fixed_t	distance )
 {
+    fixed_t x1=t1->x,y1=t1->y;
     fixed_t	x2;
     fixed_t	y2;
 	
     angle >>= ANGLETOFINESHIFT;
     shootthing = t1;
     
-    x2 = t1->x + (distance>>FRACBITS)*finecosine[angle];
-    y2 = t1->y + (distance>>FRACBITS)*finesine[angle];
+    x2 = x1 + (distance>>FRACBITS)*finecosine[angle];
+    y2 = y1 + (distance>>FRACBITS)*finesine[angle];
     shootz = t1->z + (t1->height>>1) + 8*FRACUNIT;
+
+    P_PeekShotOrigin(t1,&x1,&y1,&shootz);
+    x2=x1+(distance>>FRACBITS)*finecosine[angle];
+    y2=y1+(distance>>FRACBITS)*finesine[angle];
 
     // can't shoot outside view angles
     topslope = 100*FRACUNIT/160;	
@@ -1300,7 +1340,7 @@ P_AimLineAttack
     attackrange = distance;
     linetarget = NULL;
 	
-    P_PathTraverse ( t1->x, t1->y,
+    P_PathTraverse ( x1, y1,
 		     x2, y2,
 		     PT_ADDLINES|PT_ADDTHINGS,
 		     PTR_AimTraverse );
@@ -1325,14 +1365,15 @@ P_LineAttack
   fixed_t	slope,
   int		damage )
 {
+    fixed_t x1=t1->x,y1=t1->y;
     fixed_t	x2;
     fixed_t	y2;
 	
     angle >>= ANGLETOFINESHIFT;
     shootthing = t1;
     la_damage = damage;
-    x2 = t1->x + (distance>>FRACBITS)*finecosine[angle];
-    y2 = t1->y + (distance>>FRACBITS)*finesine[angle];
+    x2 = x1 + (distance>>FRACBITS)*finecosine[angle];
+    y2 = y1 + (distance>>FRACBITS)*finesine[angle];
     shootz = t1->z + (t1->height>>1) + 8*FRACUNIT;
     attackrange = distance;
     aimslope = slope;
@@ -1342,13 +1383,16 @@ P_LineAttack
 	shootz = t1->player->viewz;
 	la_sector = t1->subsector->sector;
     }
+    if(P_PeekShotOrigin(t1,&x1,&y1,&shootz)&&la_freeaim)la_sector=R_PointInSubsector(x1,y1)->sector;
+    x2=x1+(distance>>FRACBITS)*finecosine[angle];
+    y2=y1+(distance>>FRACBITS)*finesine[angle];
     la_hit = NULL;
 		
     solidFraction=FRACUNIT;
-    if(SV_Active())solidFraction=(fixed_t)(FRACUNIT*SV_Trace(t1->x/(float)FRACUNIT,t1->y/(float)FRACUNIT,shootz/(float)FRACUNIT,
-        (x2-t1->x)/(float)FRACUNIT,(y2-t1->y)/(float)FRACUNIT,FixedMul(slope,distance)/(float)FRACUNIT,solidPoint,&solidOwner));
+    if(SV_Active())solidFraction=(fixed_t)(FRACUNIT*SV_Trace(x1/(float)FRACUNIT,y1/(float)FRACUNIT,shootz/(float)FRACUNIT,
+        (x2-x1)/(float)FRACUNIT,(y2-y1)/(float)FRACUNIT,FixedMul(slope,distance)/(float)FRACUNIT,solidPoint,&solidOwner));
     la_hit=NULL;la_endfrac=FRACUNIT;
-    if (P_PathTraverse ( t1->x, t1->y,
+    if (P_PathTraverse ( x1, y1,
 			 x2, y2,
 			 PT_ADDLINES|PT_ADDTHINGS,
 			 PTR_ShootTraverse ))
@@ -1369,7 +1413,7 @@ P_LineAttack
         }
     }
     la_freeaim = false;
-    if(P_ShotTraced&&damage)P_ShotTraced(t1,la_hit,t1->x,t1->y,shootz,t1->x+FixedMul(x2-t1->x,la_endfrac),t1->y+FixedMul(y2-t1->y,la_endfrac),shootz+FixedMul(aimslope,FixedMul(la_endfrac,attackrange)));
+    if(P_ShotTraced&&damage)P_ShotTraced(t1,la_hit,x1,y1,shootz,x1+FixedMul(x2-x1,la_endfrac),y1+FixedMul(y2-y1,la_endfrac),shootz+FixedMul(aimslope,FixedMul(la_endfrac,attackrange)));
 }
  
 

@@ -1,3 +1,4 @@
+#include "../platform/toasty_chance.h"
 /* Exercise an actual level and complete native save/load without desktop input. */
 #include <stdio.h>
 #include <stdlib.h>
@@ -951,6 +952,13 @@ static void test_wheel(void){
         p->readyweapon=wp_chainsaw;p->cmd.buttons=BT_CHANGE|(wp_fist<<BT_WEAPONSHIFT);P_PlayerThink(p);p->cmd.buttons=0;
         if(p->pendingweapon!=wp_fist)I_Error("Chainsaw prevented fist selection");
         p->pendingweapon=wp_nochange;I_Render3DWheelKey(1);I_Render3DWheelMove(90,-90);
+        extern int I_TestWheelInterpolation(void);
+        if(!I_TestWheelInterpolation())I_Error("Wheel smooth interpolation failed");
+        int before=leveltime;for(int i=0;i<40;++i)P_Ticker();
+        if(leveltime-before!=2)I_Error("Wheel slow motion rate failed");
+        I_Render3DWheelKey(-1);before=leveltime;P_Ticker();
+        if(leveltime-before!=1)I_Error("Wheel normal speed restoration failed");
+        I_Render3DWheelKey(1);
     }
     if(frame==3)I_Render3DScreenshot();
     if(frame==8){I_Render3DWheelKey(-1);puts("Weapon wheel: nine slots, unowned rejection, cancel and chainsaw/fist toggle passed.");I_Quit();}
@@ -1149,6 +1157,55 @@ void I_TestFrame(void)
         puts("PASS ordinary map: split linedef destruction, bidirectional shots and native player walking.");
         capture=gametic+4;return;
     }
+    if(getenv("DOOM_TEST_STUCKSPIDER")){
+        static int loaded=0,start=-1,last=-1;
+        static mobj_t *trapped=NULL;static fixed_t originalX,originalY;
+        if(!loaded){G_LoadGame(getenv("DOOM_TEST_STUCKSPIDER"));loaded=1;return;}
+        if(gameaction!=ga_nothing||gamestate!=GS_LEVEL||!players[0].mo)return;
+        if(start<0){start=gametic;players[0].cheats|=CF_GODMODE;
+            p_fluidmonsters=M_CheckParm("-fluidmonsters")!=0;
+            printf("Spider regression Fluid movement: %d\n",P_FluidEnabled()!=0);
+        }
+        int elapsed=gametic-start;
+        if(last!=elapsed&&elapsed%35==0){last=elapsed;
+            for(thinker_t *th=thinkercap.next;th!=&thinkercap;th=th->next){
+                if(th->function.acp1!=(actionf_p1)P_MobjThinker)continue;
+                mobj_t *m=(mobj_t*)th;
+                if((m->type!=MT_SPIDER&&m->type!=MT_BABY)||m->health<=0)continue;
+                if(elapsed==0&&m->target){
+                    trapped=m;originalX=m->x;originalY=m->y;
+                    fixed_t oldz=m->z;m->z=m->floorz;
+                    if(P_TryMove(m,m->x-12*FRACUNIT,m->y))I_Error("Spider can approach embedded tall ledge");
+                    if(P_TryMove(m,2420*FRACUNIT,m->y))I_Error("Spider can cross tall ledge");
+                    extern fixed_t tmfloorz;
+                    if(!P_CheckPosition(m,m->x+12*FRACUNIT,m->y)||tmfloorz!=m->floorz)
+                        I_Error("Spider cannot retreat along lower floor");
+                    m->z=oldz;
+                }
+                printf("SPIDER %d type %d xyz %.2f %.2f %.2f floor %.2f ceiling %.2f sector %d radius %.1f target %d state %d\n",elapsed,m->type,m->x/(double)FRACUNIT,m->y/(double)FRACUNIT,m->z/(double)FRACUNIT,m->floorz/(double)FRACUNIT,m->ceilingz/(double)FRACUNIT,(int)(m->subsector->sector-sectors),m->radius/(double)FRACUNIT,m->target!=NULL,(int)(m->state-states));
+                if(elapsed==0){extern fixed_t tmfloorz,tmceilingz,tmdropoffz;
+                    fixed_t box[4]={m->y+m->radius,m->y-m->radius,m->x-m->radius,m->x+m->radius};
+                    for(int li=0;li<numlines;++li){line_t *l=&lines[li];
+                        if(box[BOXRIGHT]<=l->bbox[BOXLEFT]||box[BOXLEFT]>=l->bbox[BOXRIGHT]||box[BOXTOP]<=l->bbox[BOXBOTTOM]||box[BOXBOTTOM]>=l->bbox[BOXTOP]||P_BoxOnLineSide(box,l)!=-1)continue;
+                        printf("LINE %d (%.1f %.1f)-(%.1f %.1f) front %d %.1f back %d %.1f side %d\n",li,l->v1->x/(double)FRACUNIT,l->v1->y/(double)FRACUNIT,l->v2->x/(double)FRACUNIT,l->v2->y/(double)FRACUNIT,(int)(l->frontsector-sectors),l->frontsector->floorheight/(double)FRACUNIT,l->backsector?(int)(l->backsector-sectors):-1,l->backsector?l->backsector->floorheight/(double)FRACUNIT:0,P_PointOnLineSide(m->x,m->y,l));
+                    }
+                    for(int dy=-1;dy<=1;++dy)for(int dx=-1;dx<=1;++dx){
+                        fixed_t f=0,c=0;int sv=SV_Position(m,m->x+dx*12*FRACUNIT,m->y+dy*12*FRACUNIT,&f,&c);
+                        int ok=P_CheckPosition(m,m->x+dx*12*FRACUNIT,m->y+dy*12*FRACUNIT);
+                        printf("PROBE %d %d clear %d sv %d floor %.1f ceiling %.1f drop %.1f\n",dx,dy,ok,sv,tmfloorz/(double)FRACUNIT,tmceilingz/(double)FRACUNIT,tmdropoffz/(double)FRACUNIT);
+                    }
+                }
+            }
+        }
+        if(elapsed==5)I_Render3DScreenshotTo("stuckspider-before.png");
+        if(elapsed>=140){
+            if(!trapped||P_AproxDistance(trapped->x-originalX,trapped->y-originalY)<64*FRACUNIT)
+                I_Error("Saved spider remained trapped beside tiered ledge");
+            if(trapped->z!=-64*FRACUNIT||trapped->x<originalX)
+                I_Error("Spider escaped through ledge or onto upper floor");
+            puts("PASS saved spider retreats from tiered ledges; approach and crossing blocked");
+            I_Render3DScreenshotTo("stuckspider-after.png");I_Quit();}return;
+    }
     if(getenv("DOOM_TEST_STUCKBARON")){
         static int start=-1,last=-1;static mobj_t *trapped=NULL;
         static fixed_t originalX,originalY;
@@ -1221,6 +1278,15 @@ void I_TestFrame(void)
         }
         if(gametic-start==210){extern void I_DebugSavedLiquid(void);I_DebugSavedLiquid();I_Render3DScreenshotTo(getenv("DOOM_TEST_SAVED_ENV"));}
         if(gametic-start>=215)I_Quit();return;
+    }
+    if(getenv("DOOM_TEST_KEY_HANDS")){
+        static int start=-1,last=-1;if(gamestate!=GS_LEVEL||gametic<30)return;
+        if(start<0)start=leveltime;
+        int elapsed=leveltime-start,which=elapsed/35,phase=elapsed%35;
+        if(which>=6){puts("PASS all six key-hand pickup sequences");I_Quit();return;}
+        if(which!=last){last=which;players[0].cards[which]=0;P_GiveCard(&players[0],(card_t)which);}
+        if(phase==10){static char name[40];sprintf(name,"key-hand-%d.png",which);I_Render3DScreenshotTo(name);}
+        return;
     }
     if(getenv("DOOM_TEST_ROMERO_POPUP")){
         static int start=-1;if(gamestate!=GS_LEVEL||gametic<30)return;
@@ -1924,6 +1990,108 @@ void I_TestFrame(void)
     if(getenv("DOOM_TEST_DIGGING")){test_digging();return;}
     if(getenv("DOOM_TEST_SETTINGS")){test_settings();return;}
     if(getenv("DOOM_TEST_WHEEL")){test_wheel();return;}
+
+
+    if(getenv("DOOM_TEST_TOASTY")){
+        doom_toasty_state state={0x746f6173u};int seen=0;
+        for(unsigned map=1;map<=90;++map){
+            int fired=0;
+            for(int gib=1;gib<=30;++gib)if(doom_toasty_gib(&state,map)){
+                if(gib>3)I_Error("Toasty fired after third gib");
+                ++fired;seen|=1<<(gib-1);
+            }
+            if(fired!=1)I_Error("Toasty did not fire exactly once per level");
+        }
+        if(seen!=7)I_Error("Toasty did not select all three gib positions");
+        puts("PASS Toasty once per level on random first, second or third gib");I_Quit();return;
+    }
+    if(getenv("DOOM_TEST_DIRECTOR_EXIT")){
+        extern void G_DirectorRecord(const char*);
+        static int stage,start;
+        if(stage==0&&gamestate==GS_LEVEL&&gameaction==ga_nothing){G_DirectorRecord("test_director_exit");stage=1;}
+        else if(stage==1&&demorecording){start=gametic;stage=2;}
+        else if(stage==2&&gametic-start>10){G_ExitLevel();stage=3;start=gametic;}
+        else if(stage==3&&gametic-start>5){
+            if(demorecording||gamestate!=GS_DEMOSCREEN||!menuactive)I_Error("Director exit did not open main menu");
+            puts("PASS director level exit saves take and returns to main menu");I_Quit();
+        }return;
+    }
+    if(getenv("DOOM_TEST_DIRECTOR")){
+        extern int M_DirectorTest(int);extern float I_DirectorPitch(void);extern void I_DirectorSetPitch(float);
+        static int stage=0,start=0;static fixed_t rx,ry,rz;static angle_t ra;static int rammo;
+        if(gameaction!=ga_nothing||gamestate!=GS_LEVEL)return;
+        if(stage==0){if(!M_DirectorTest(0))I_Error("Director wall placement failed");stage=1;start=gametic;}
+        else if(stage==1&&gametic-start>10){I_Render3DScreenshotTo("director-menu.png");stage=2;start=gametic;}
+        else if(stage==2&&gametic-start>5){M_DirectorTest(1);stage=3;start=gametic;}
+        else if(stage==3&&gametic-start>10){I_Render3DScreenshotTo("director-setup.png");stage=4;start=gametic;}
+        else if(stage==4&&gametic-start>5){if(!M_DirectorTest(2))I_Error("Director setup persistence/start failed");stage=5;}
+        else if(stage==5&&demorecording){key(ev_keydown,KEY_UPARROW);key(ev_keydown,KEY_RCTRL);I_DirectorSetPitch(.25f);stage=6;start=gametic;}
+        else if(stage==6&&gametic-start>35){key(ev_keyup,KEY_UPARROW);key(ev_keyup,KEY_RCTRL);stage=7;start=gametic;}
+        else if(stage==7&&gametic-start>20){rx=players[0].mo->x;ry=players[0].mo->y;rz=players[0].mo->z;ra=players[0].mo->angle;rammo=players[0].ammo[am_clip];
+            if(!M_DirectorTest(3)||!M_DirectorTest(4))I_Error("Director stop/play failed");stage=8;start=gametic;}
+        else if(stage==8&&demoplayback&&gametic-start>20){I_Render3DScreenshotTo("director-playback.png");stage=9;}
+        else if(stage==9&&!demoplayback){if(!M_DirectorTest(5))I_Error("Director replay did not return to menu");
+            if(players[0].mo->x!=rx||players[0].mo->y!=ry||players[0].mo->z!=rz||players[0].mo->angle!=ra)I_Error("Director replay movement diverged");
+            if(players[0].ammo[am_clip]!=rammo||rammo>=50)I_Error("Director shooting replay diverged");
+            if(fabsf(I_DirectorPitch()-.25f)>.001f)I_Error("Director pitch did not round trip");
+            stage=10;start=gametic;}
+        else if(stage==10&&gametic-start>8){I_Render3DScreenshotTo("director-takes.png");stage=11;start=gametic;}
+        else if(stage==11&&gametic-start>5){if(!M_DirectorTest(6))I_Error("Director delete/cancel failed");puts("PASS director placement, setup save/clear/reload, per-map take browser, exact movement/pitch/shooting replay and stop reset");I_Quit();}
+        if(stage>=8&&gametic-start>350)I_Error("Director replay timed out");
+        return;
+    }
+    if(getenv("DOOM_TEST_ARCADE")){
+        extern int M_ArcadeTest(int);
+        static int astage=-2,atime=0;
+        if(gamestate!=GS_LEVEL||gameaction!=ga_nothing)return;
+        if(astage==-2){M_ArcadeTest(10);astage=-1;atime=gametic;}
+        else if(astage==-1&&gametic-atime>10){I_Render3DScreenshotTo("arcade-main-menu.png");astage=-3;atime=gametic;}
+        else if(astage==-3&&gametic-atime>4){astage=0;}
+        else if(astage==0){if(M_ArcadeTest(0)<1)I_Error("Arcade map discovery failed");astage=1;atime=gametic;}
+        else if(astage==1&&gametic-atime>12){I_Render3DScreenshotTo("arcade-browser.png");astage=10;atime=gametic;}
+        else if(astage==10&&gametic-atime>4){if(!M_ArcadeTest(11)||!M_ArcadeTest(12))I_Error("Arcade leaderboard/time thresholds failed");astage=11;atime=gametic;}
+        else if(astage==11&&gametic-atime>8){I_Render3DScreenshotTo("arcade-level-scores.png");astage=12;atime=gametic;}
+        else if(astage==12&&gametic-atime>4){if(!M_ArcadeTest(1))I_Error("Arcade start failed");astage=2;atime=gametic;}
+        else if(astage==2&&gametic-atime>12){if(!M_ArcadeTest(2))I_Error("Arcade UV pistol start failed");if(!M_ArcadeTest(3))I_Error("Arcade scoring failed");if(!M_ArcadeTest(9))I_Error("Arcade accuracy or forced classic rules failed");astage=3;atime=gametic;}
+        else if(astage==3&&gametic-atime>12){I_Render3DScreenshotTo("arcade-score.png");G_ExitLevel();astage=4;atime=gametic;}
+        else if(astage==4&&gametic-atime>12){if(!M_ArcadeTest(4))I_Error("Arcade completion failed");I_Render3DScreenshotTo("arcade-results.png");astage=9;atime=gametic;}
+        else if(astage==9&&gametic-atime>5){if(!M_ArcadeTest(5))I_Error("Arcade name/save/reload failed");if(!M_ArcadeTest(6))I_Error("Arcade restart failed");astage=5;atime=gametic;}
+        else if(astage==5&&gametic-atime>12){P_DamageMobj(players[consoleplayer].mo,NULL,NULL,10000);astage=6;atime=gametic;}
+        else if(astage==6&&gametic-atime>12){if(!M_ArcadeTest(7))I_Error("Arcade death handling failed");if(!M_ArcadeTest(8))I_Error("Arcade normal-game reset failed");puts("PASS arcade map browser, UV pistol start, scoring, completion, name entry, persistence, death and reset");I_Quit();}
+        return;
+    }
+    if(getenv("DOOM_TEST_PEEK")){
+        if(gamestate!=GS_LEVEL||gameaction!=ga_nothing)return;
+        extern void I_TestCornerPeek(void);
+        extern int I_TestSettingsControls(void);
+        I_TestCornerPeek();if(!I_TestSettingsControls())I_Error("Peek binding menu regression");
+        puts("PASS peek hold/release, opposed keys, smoothing, player unchanged, pause/demo guards, remapping, config roundtrip, binding menu and wall clipping");I_Quit();return;
+    }
+    if(getenv("DOOM_CAPTURE_HELMETS")){
+        static int start=-1;
+        extern int st_helmet_style;
+        extern const unsigned char *ST_HelmetFace(int);
+        if(gamestate!=GS_LEVEL||gameaction!=ga_nothing)return;
+        if(start<0){
+            start=gametic;
+            for(int style=1;style<=4;++style){
+                st_helmet_style=style;
+                for(int i=0;i<42;++i)if(!ST_HelmetFace(i))I_Error("Missing helmet face");
+            }
+            st_helmet_style=1;
+        }
+        if(gametic-start==10)I_Render3DScreenshotTo("helmet-silver.png");
+        if(gametic-start==12)st_helmet_style=2;
+        if(gametic-start==22)I_Render3DScreenshotTo("helmet-tan.png");
+        if(gametic-start>24){st_helmet_style=0;puts("PASS 42 faces per helmet (four styles) and live switching");I_Quit();}return;
+    }
+    if(getenv("DOOM_CAPTURE_PEEK")){
+        static int start=-1;
+        if(gamestate!=GS_LEVEL||gameaction!=ga_nothing)return;
+        if(start<0){start=gametic;I_Render3DPeekKey(SDL_SCANCODE_C,1);}
+        if(gametic-start==20)I_Render3DScreenshotTo("corner-lean-right.png");
+        if(gametic-start>23){I_Render3DPeekReset();I_Quit();}return;
+    }
 #endif
     if(getenv("DOOM_TEST_SIGIL_ROUTE")){test_sigil_route();return;}
 #ifdef DOOM_RENDER3D

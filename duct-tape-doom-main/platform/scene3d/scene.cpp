@@ -4,8 +4,13 @@
 #include "../shaders/feature_flags.h"
 #include "modern_hud.h"
 #include "weapon_wheel.h"
+#include "corner_peek.h"
 #include "key_notice.h"
+#include "key_hand.h"
 #include "toasty.h"
+#include "director.h"
+#include "../../assets/arcade/podium_png.h"
+extern "C" { int Arcade_PodiumRect(float*); extern int arcade_podium_hires; extern unsigned arcade_rank_pixels[SCREENWIDTH*SCREENHEIGHT]; }
 #include "../mod_soundbank.h"
 extern "C" int p_fluidfastpistol;
 extern "C" int sv_chain_collapses,sv_hanging_fragments,sv_collapse_size;
@@ -18,12 +23,16 @@ void I_SetAtmosphereExtras(int hidden,int adjacent);
 }
 extern "C" {
 extern int r_modernhud;
+extern int st_helmet_style;
+int I_Render3DPeekOrigin(mobj_t*,fixed_t*,fixed_t*,fixed_t*);
 #include "../audio/sound_options.h"
 #include "../../linuxdoom-1.10/p_local.h"
 }
 #include "../settings_panel.h"
 
 namespace doom3d {
+GpuTextureRef arcadePodiumTexture;
+GpuTextureRef arcadeRankTexture;
 Profile profile;
 Settings settings;
 SDL_Window *gameWindow;
@@ -74,6 +83,15 @@ static void renderViewPlace(player_t &player) {
     mo->z=mo->floorz;mo->angle=(angle_t)(int64_t)(atof(myargv[view+3])/360.0*4294967296.0);
     player.viewz=mo->z+player.viewheight;
     if(view+4<myargc&&myargv[view+4][0]!='-')pitch=std::clamp((float)atof(myargv[view+4])*(float)doomPi/180,-1.2f,1.2f);
+}
+// Advance visual interpolation in simulation time, while rendering every frame.
+// Keep the previous/current snapshots for the entire slowed world tick.
+static double worldInterpolation(uint64_t now){
+    static uint64_t snapshot=0,last=0;static double progress=0;
+    double rate=wheelActive&&!netgame&&!demorecording&&!demoplayback&&!menuactive&&!paused?.05:1.0;
+    if(snapshot!=tickTime){snapshot=tickTime;progress=(now-tickTime)/(1e9/TICRATE)*rate;}
+    else if(last&&now>=last)progress+=(now-last)/(1e9/TICRATE)*rate;
+    last=now;return std::clamp(progress,0.0,1.0);
 }
 static void beforeTic() {
     if(gamestate!=GS_LEVEL||!players[displayplayer].mo||paused) {tickTime=0;return;}
@@ -133,7 +151,10 @@ void applySettings() {
         SDL_SetWindowFullscreen(gameWindow,settings.fullscreen!=0);
     R_AcceleratedView=settings.accelerated?acceleratedView:nullptr;
     r_modernhud=settings.accelerated&&settings.hudStyle!=0;
+    st_helmet_style=settings.helmetFace;
+    P_PeekOriginHook=I_Render3DPeekOrigin;
     R_BeforeTic=settings.accelerated?beforeTic:nullptr;
+    R_WheelSlowMotion=+[]()->int{return wheelActive;};
     R_MuzzleFlash=settings.accelerated?fluidWeaponShot:nullptr;
     R_WeaponAttack=settings.accelerated?fluidWeaponAttack:nullptr;
     R_WeaponAux=settings.accelerated&&P_FluidWeaponsEnabled()?fluidWeaponAux:nullptr;
@@ -189,6 +210,9 @@ void sceneInit(SDL_Window *window) {
     if(paletteOption&&paletteOption+1<myargc)settings.palette=atoi(myargv[paletteOption+1])!=0;
 }
 void sceneShutdown() {
+    arcadePodiumTexture.reset();arcade_podium_hires=0;
+    arcadeRankTexture.reset();
+    for(auto &texture:keyHandTextures)texture.reset();keyHandVisible=keyWeaponDrop=0;
     toastyTexture.reset();toastyVisible=0;romeroTexture.reset();romeroAge=-1;
     stopRelight();
     R_AcceleratedView=nullptr;R_BeforeTic=nullptr;R_MuzzleFlash=nullptr;R_WallImpact=nullptr;R_RocketImpact=nullptr;R_BFGHit=nullptr;R_DoorMotion=nullptr;R_DoorDamage=nullptr;R_CraterCrumble=nullptr;R_SurfaceChip=nullptr;R_SolidBulletImpact=nullptr;R_RubbleImpact=nullptr;R_DamageHit=nullptr;R_BloodHit=nullptr;R_PlaneImpact=nullptr;R_ShotPassed=nullptr;r_uncapped=0;v_overlayactive=0;
@@ -438,8 +462,8 @@ FrameView prepareFrame(int w,int h) {
         }
         camera.eye[0]=units(mo->x);camera.eye[1]=units(mo->y);camera.eye[2]=units(player->viewz);
         float yaw=(float)(mo->angle*(2.0*doomPi/4294967296.0));
-        if(tickTime&&!paused&&!menuactive&&!demoplayback) {
-            fraction=std::clamp((SDL_GetTicksNS()-tickTime)/(1e9/TICRATE),0.0,1.0);
+        if(tickTime&&!paused&&!menuactive&&(!demoplayback||director_demo)) {
+            fraction=worldInterpolation(SDL_GetTicksNS());
             if(std::hypot(camera.eye[0]-oldEye[0],camera.eye[1]-oldEye[1])<128) {
                 for(int i=0;i<3;++i)camera.eye[i]=oldEye[i]+(camera.eye[i]-oldEye[i])*fraction;
                 yaw=oldYaw+std::remainder(yaw-oldYaw,2*doomPi)*fraction;
@@ -448,11 +472,12 @@ FrameView prepareFrame(int w,int h) {
         // A game with its own look (Heretic) sets the pitch, demos included;
         // mouselook turns that look (I_Render3DLook) so its aiming agrees.
         float gameLook;
-        float look=Game_LookPitch(&gameLook)?gameLook:demoplayback?0:pitch;
-        tourpitch=look;freeaim=settings.look&&!demoplayback;
+        float look=Game_LookPitch(&gameLook)?gameLook:demoplayback&&!director_demo?0:pitch;
+        tourpitch=look;freeaim=settings.look&&(!demoplayback||director_demo);
         camera.right[0]=sin(yaw);camera.right[1]=-cos(yaw);
         camera.forward[0]=cos(yaw)*cos(look);camera.forward[1]=sin(yaw)*cos(look);camera.forward[2]=sin(look);
         camera.up[0]=-cos(yaw)*sin(look);camera.up[1]=-sin(yaw)*sin(look);camera.up[2]=cos(look);
+        applyPeek(camera);directorView(camera,float(fraction));
         camera.fog[0]=0.00045f*(player->mo->subsector->sector->ceilingpic==skyflatnum?0.35f:1.0f);
         camera.fog[1]=0.012f;camera.fog[2]=fogReferenceHeight;
         camera.fog[3]=(leveltime+fraction)/TICRATE;
@@ -529,15 +554,55 @@ FrameView prepareFrame(int w,int h) {
     return view;
 }
 std::vector<unsigned> hudPixels(const unsigned *pixels) {
+    float podiumRect[4];
+    if(Arcade_PodiumRect(podiumRect)&&!arcadePodiumTexture){
+        SDL_Surface *png=SDL_LoadPNG_IO(SDL_IOFromConstMem(arcade_podium_png,sizeof(arcade_podium_png)),true);
+        SDL_Surface *rgba=png?SDL_ConvertSurface(png,SDL_PIXELFORMAT_RGBA32):nullptr;
+        SDL_DestroySurface(png);
+        if(rgba){arcadePodiumTexture=gpuCreateTexture(GpuFormat::RGBA8,rgba->w,rgba->h,rgba->pixels,rgba->pitch);SDL_DestroySurface(rgba);}
+        arcade_podium_hires=arcadePodiumTexture?1:0;
+    }
     std::vector<unsigned> overlay(pixels,pixels+SCREENWIDTH*SCREENHEIGHT);
     if(worldPending) for(int i=0;i<SCREENWIDTH*SCREENHEIGHT;++i)overlay[i]=(overlay[i]&0xffffff)|(unsigned)v_overlaymask[i]<<24;
+    if(Arcade_MenuOpen()){
+        std::vector<unsigned> ranks(SCREENWIDTH*SCREENHEIGHT,0);
+        // Render-time animation avoids the old eight-tic colour jumps.
+        double time=SDL_GetTicksNS()*1e-9;
+        for(int i=0;i<SCREENWIDTH*SCREENHEIGHT;++i)if(arcade_rank_pixels[i]){
+            unsigned tag=arcade_rank_pixels[i];int rank=tag>>24,x=i%SCREENWIDTH,y=i/SCREENWIDTH;
+            float r,g,b;
+            if(rank==1){
+                float hue=float(time*.19+x*.035);hue-=std::floor(hue);
+                auto channel=[&](float offset){float h=std::fmod(hue+offset,1.f);return .24f+.76f*std::clamp(std::abs(h*6-3)-1,0.f,1.f);};
+                r=channel(0);g=channel(2.f/3);b=channel(1.f/3);
+                float shine=.18f*std::pow(std::max(0.f,std::sin(float(time*2.2-x*.25))),12.f);
+                r+=shine*(1-r);g+=shine*(1-g);b+=shine*(1-b);
+            }else if(rank==2){
+                float shine=std::pow(std::max(0.f,std::sin(float(time*2.1-x*.22))),18.f);
+                r=.70f+.22f*shine;g=.22f+.40f*shine;b=1.f;
+            }else{
+                // Silver remains quieter than the animated top two.
+                float silver=.69f+.12f*(1+std::cos(y*.8f))*.5f;
+                r=g=b=silver;
+            }
+            float shade=(tag&255)==2?1.f:.75f;
+            ranks[i]=0xff000000u|((unsigned)(b*shade*255)<<16)|((unsigned)(g*shade*255)<<8)|(unsigned)(r*shade*255);
+        }
+        if(!arcadeRankTexture)arcadeRankTexture=gpuCreateTexture(GpuFormat::RGBA8,SCREENWIDTH,SCREENHEIGHT,ranks.data(),SCREENWIDTH*4);
+        else gpuUpdateTexture(arcadeRankTexture,GpuFormat::RGBA8,{{0,0,SCREENWIDTH,SCREENHEIGHT}},ranks.data(),SCREENWIDTH*4);
+    }
     std::vector<unsigned> modern(SCREENWIDTH*SCREENHEIGHT,0);
-    modernHud(modern);
+    if((director_watch||director_demo&&demoplayback)&&!menuactive){std::fill(overlay.begin(),overlay.end(),0);}
+    else modernHud(modern);
+    directorMarkers(overlay);
+    if(!(director_demo&&demoplayback)){
     keyNotice(overlay);
+    keyHandNotice();
     toastyNotice();
     romeroNotice();
     wheelDraw(overlay);
-    if(settings.fps&&worldPending&&!menuactive&&fps>0) {
+    }else {keyHandVisible=0;toastyVisible=0;romeroAge=-1;}
+    if(settings.fps&&worldPending&&!menuactive&&fps>0&&!(director_demo&&demoplayback)) {
         // Readable in fullscreen, independent of HUD layout and scale.
         char lines[2][48];snprintf(lines[0],48,"%.0f FPS",fps);
         snprintf(lines[1],48,"%.1f MS / MAX %.1f",frameMs,peakFrameMs);
@@ -549,7 +614,7 @@ std::vector<unsigned> hudPixels(const unsigned *pixels) {
         const byte *pal=(const byte*)W_CacheLumpName((char*)"PLAYPAL",PU_CACHE);
         for(int row=0;row<2;++row) {
             int width=0;for(char c:std::string(lines[row])){auto im=glyph(c);width+=im?im->width:4;}
-            int x=(SCREENWIDTH-width)/2,y=3+row*12;
+            int x=(SCREENWIDTH-width)/2,y=3+row*12+(arcade_active?36:0);
             for(int yy=y-1;yy<std::min(SCREENHEIGHT,y+10);++yy)
                 for(int xx=std::max(0,x-3);xx<std::min(SCREENWIDTH,x+width+3);++xx)overlay[yy*SCREENWIDTH+xx]=0xd010151a;
             for(char c:std::string(lines[row])) {
@@ -699,6 +764,114 @@ extern "C" void I_TestSmoothActor(mobj_t *actor){
 }
 #endif
 int I_Render3DWheelOpen(void){return wheelActive;}
+int I_Render3DPeekKey(int scancode,int down){
+    if(!peekAllowed())return 0;
+    int direction=scancode&&scancode==settings.peekLeft?-1:scancode&&scancode==settings.peekRight?1:0;
+    if(!direction)return 0;
+    if(peekLevel!=r_levelserial||peekPlayer!=displayplayer)resetPeek();
+    peekLevel=r_levelserial;peekPlayer=displayplayer;
+    if(direction<0)peekHeldLeft=down!=0;else peekHeldRight=down!=0;
+    peekDirection=int(peekHeldRight)-int(peekHeldLeft);
+    return 1;
+}
+void I_Render3DPeekReset(void){resetPeek();}
+extern "C" int I_Render3DPeekOrigin(mobj_t *actor,fixed_t *x,fixed_t *y,fixed_t *z){
+    if(!peekAllowed()||actor!=players[displayplayer].mo||peekLevel!=r_levelserial||std::abs(peekAmount)<.001f)return 0;
+    float yaw=double(actor->angle)*(6.283185307179586/4294967296.0);
+    float sign=peekAmount<0?-1.f:1.f,dx=std::sin(yaw)*sign,dy=-std::cos(yaw)*sign;
+    float angle=std::abs(peekAmount)/24.f*.785398163f;
+    float reach=34.f*std::sin(angle),drop=34.f*(1-std::cos(angle));
+    float eye[3]={units(actor->x),units(actor->y),units(actor->player->viewz)};
+    float amount=peekClearance(eye,dx,dy,reach,-drop/reach);
+    *x=actor->x+fixed_t(dx*amount*FRACUNIT);*y=actor->y+fixed_t(dy*amount*FRACUNIT);
+    *z=actor->player->viewz-fixed_t(drop*(amount/reach)*FRACUNIT);
+    return 1;
+}
+
+#ifdef DOOM_TEST_DRIVER
+extern "C" void I_TestCornerPeek(void){
+    Settings saved=settings;settings.cornerPeek=settings.accelerated=1;
+    settings.peekLeft=SDL_SCANCODE_Z;settings.peekRight=SDL_SCANCODE_C;
+    I_Render3DPeekReset();
+    mobj_t *m=players[displayplayer].mo;fixed_t x=m->x,y=m->y,z=m->z;
+    if(!I_Render3DPeekKey(SDL_SCANCODE_Z,1)||peekDirection!=-1)I_Error((char*)"Peek left press failed");
+    I_Render3DPeekKey(SDL_SCANCODE_Z,1);
+    if(peekDirection!=-1)I_Error((char*)"Peek repeat toggled hold");
+    Uniforms view{};view.eye[0]=units(x);view.eye[1]=units(y);view.eye[2]=units(players[displayplayer].viewz);view.right[0]=1;view.up[2]=1;
+    peekClock=SDL_GetTicksNS()-50000000;applyPeek(view);
+    if(peekAmount>=0||std::abs(peekAmount)>8.1f)I_Error((char*)"Peek smoothing failed");
+    I_Render3DPeekKey(SDL_SCANCODE_C,1);if(peekDirection!=0)I_Error((char*)"Opposed peek keys should center");
+    I_Render3DPeekKey(SDL_SCANCODE_Z,0);if(peekDirection!=1)I_Error((char*)"Remaining held peek key lost");
+    I_Render3DPeekKey(SDL_SCANCODE_C,0);if(peekDirection!=0)I_Error((char*)"Peek release failed");
+    for(int i=0;i<4;++i){peekClock=SDL_GetTicksNS()-50000000;applyPeek(view);}
+    if(peekAmount!=0||m->x!=x||m->y!=y||m->z!=z)I_Error((char*)"Peek moved player or failed to return");
+    I_Render3DPeekKey(SDL_SCANCODE_Z,1);paused=true;applyPeek(view);paused=false;
+    if(peekDirection||peekHeldLeft||peekAmount)I_Error((char*)"Peek stuck after pause");
+    settings.cornerPeek=0;if(I_Render3DPeekKey(SDL_SCANCODE_Z,1))I_Error((char*)"Disabled peek consumed key");settings.cornerPeek=1;
+    demoplayback=true;if(I_Render3DPeekKey(SDL_SCANCODE_Z,1))I_Error((char*)"Peek active during demo");demoplayback=false;
+    settings.peekLeft=SDL_SCANCODE_V;
+    if(I_Render3DPeekKey(SDL_SCANCODE_Z,1)||!I_Render3DPeekKey(SDL_SCANCODE_V,1))I_Error((char*)"Peek remapping failed");
+    I_Render3DPeekReset();
+    int checked=0;
+    for(int i=0;i<numlines&&!checked;++i){const line_t &line=lines[i];if(line.backsector||!line.frontsector)continue;
+        float dx=units(line.dx),dy=units(line.dy),length=std::hypot(dx,dy);if(length<64)continue;
+        float nx=dy/length,ny=-dx/length;
+        float eye[3]={(units(line.v1->x)+units(line.v2->x))*.5f+nx*8,(units(line.v1->y)+units(line.v2->y))*.5f+ny*8,units(line.frontsector->floorheight)+41};
+        if(R_PointInSubsector(fixed_t(eye[0]*FRACUNIT),fixed_t(eye[1]*FRACUNIT))->sector!=line.frontsector)continue;
+        float amount=peekClearance(eye,-nx,-ny,24);
+        if(amount>5.1f)I_Error((char*)"Peek camera passed solid wall");checked=1;
+    }
+    if(!checked)I_Error((char*)"No wall fixture for peek camera");
+    // Full lean in open space must reach 12 degrees while preserving an
+    // orthonormal view basis; collision reduces the lean instead of clipping.
+    int open=0;
+    float eye[3]={units(x),units(y),units(players[displayplayer].viewz)};
+    for(int n=0;n<8&&!open;++n){float a=n*.785398163f,dx=std::cos(a),dy=std::sin(a);
+        if(peekClearance(eye,dx,dy,24.04163f,-.41421356f)<24.04f)continue;
+        I_Render3DPeekKey(SDL_SCANCODE_C,1);
+        for(int step=0;step<4;++step){view=Uniforms{};std::copy(eye,eye+3,view.eye);view.right[0]=dx;view.right[1]=dy;view.up[2]=1;
+            peekClock=SDL_GetTicksNS()-50000000;applyPeek(view);}
+        if(std::abs(cornerPeekRoll-.20943951f)>.001f||view.eye[2]>=eye[2]-9.9f)I_Error((char*)"Full peek did not use gentle 12-degree tilt along arc");
+        float dot=0,len=0;for(int i=0;i<3;++i){dot+=view.right[i]*view.up[i];len+=view.right[i]*view.right[i];}
+        if(std::abs(dot)>.001f||std::abs(len-1)>.001f)I_Error((char*)"Peek distorted camera basis");
+        angle_t oldAngle=m->angle;
+        double yaw=std::atan2(double(dx),double(-dy));if(yaw<0)yaw+=6.283185307179586;
+        m->angle=angle_t(yaw*(4294967296.0/6.283185307179586));
+        fixed_t sx=x,sy=y,sz=z;
+        if(!P_PeekShotOrigin(m,&sx,&sy,&sz)||std::abs(units(sx)-view.eye[0])>.01f||std::abs(units(sy)-view.eye[1])>.01f||std::abs(units(sz)-view.eye[2])>.01f)
+            I_Error((char*)"Peek firing origin does not match camera");
+        P_LineAttack(m,m->angle,64*FRACUNIT,0,0);
+        if(std::abs(trace.x-sx)>FRACUNIT||std::abs(trace.y-sy)>FRACUNIT)I_Error((char*)"Hitscan did not use leaning origin");
+        if(cornerPeekAim[0]||cornerPeekAim[1])I_Error((char*)"Peek crosshair left screen centre");
+        m->angle=oldAngle;
+        open=1;I_Render3DPeekReset();
+        sx=x;sy=y;sz=z;
+        if(P_PeekShotOrigin(m,&sx,&sy,&sz)||sx!=x||sy!=y||sz!=z)I_Error((char*)"Inactive peek changed shot origin");
+    }
+    if(!open)I_Error((char*)"No open-space fixture for full lean");
+    Settings config{};readOption(config,"peek_left",SDL_SCANCODE_V);readOption(config,"corner_peek",0);
+    readOption(config,"peek_right",SDL_SCANCODE_F4);
+    if(config.peekLeft!=SDL_SCANCODE_V||config.cornerPeek||config.peekRight!=SDL_SCANCODE_C)I_Error((char*)"Peek config validation failed");
+    FILE *file=tmpfile();if(!file)I_Error((char*)"Peek config test file failed");
+    writeOptions(file,config);rewind(file);Settings restored{};char key[128];double value;
+    while(fscanf(file,"%127s %lf",key,&value)==2)readOption(restored,key,value);
+    fclose(file);
+    if(restored.peekLeft!=config.peekLeft||restored.peekRight!=config.peekRight||restored.cornerPeek!=config.cornerPeek)I_Error((char*)"Peek bindings did not persist");
+    settings=saved;I_Render3DPeekReset();
+}
+#endif
+extern "C" int I_TestWheelInterpolation(void){
+    uint64_t saved=tickTime,now=SDL_GetTicksNS();
+    bool wasOpen=wheelActive;wheelActive=true;tickTime=now;
+    worldInterpolation(now);
+    int ok=1;
+    for(int i=1;i<=5;++i){
+        double f=worldInterpolation(now+uint64_t(i)*100000000);
+        if(std::abs(f-i*.175)>.0001)ok=0;
+    }
+    wheelActive=wasOpen;tickTime=saved;
+    worldInterpolation(SDL_GetTicksNS());return ok;
+}
 void I_Render3DWheelKey(int down){
     if(down>0){if(gamestate!=GS_LEVEL||menuactive||paused||demoplayback||demorecording||netgame||players[consoleplayer].health<=0)return;wheelActive=true;wheelLevel=r_levelserial;wheelSelected=players[consoleplayer].readyweapon;wheelX=wheelY=0;}
     else {if(down==0&&wheelActive&&gamestate==GS_LEVEL&&!menuactive&&!paused&&wheelLevel==r_levelserial&&players[consoleplayer].health>0&&wheelOwned(wheelSelected)&&wheelSelected!=players[consoleplayer].readyweapon)players[consoleplayer].pendingweapon=(weapontype_t)wheelSelected;wheelActive=false;}

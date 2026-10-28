@@ -329,6 +329,8 @@ void P_AggressiveRemove(mobj_t *actor);
 boolean P_AggressiveBarrageAim(mobj_t *actor,mobj_t *aim);
 boolean P_PersistentPursuit(mobj_t *actor);
 
+extern int (*P_PeekOriginHook)(mobj_t*,fixed_t*,fixed_t*,fixed_t*);
+boolean P_PeekShotOrigin(mobj_t *actor, fixed_t *x, fixed_t *y, fixed_t *z);
 int P_RomeroStick(mobj_t *mo,float nx,float ny,float nz);
 #endif	// __P_LOCAL__
 //-----------------------------------------------------------------------------

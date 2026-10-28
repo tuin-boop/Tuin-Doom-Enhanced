@@ -79,6 +79,9 @@ struct Settings {
     float flashlightTintGain=1;
     int emissive=1, fog=1, palette=0;
     int voxelModels=1,voxelEyes=1;
+    int keyPickupHands=1;
+    int helmetFace=0;
+    int cornerPeek=1,peekLeft=29,peekRight=6; // SDL scancodes Z / C.
     int ps2Style=0; // Optional chunky texture / stepped-lighting preset.
     int detail=1; // Derived normal maps and palette gloss.
     int variedHighlights=1; // Gloss highlights tighten on smooth artwork and spread on busy artwork, per palette ramp.
@@ -301,7 +304,13 @@ using LoadingShow=void(*)(const char *title,const char *stage,float fraction);
 bool loadPending();
 void runLoading(int width,int height,LoadingShow show);
 std::vector<unsigned> hudPixels(const unsigned *pixels);
+extern GpuTextureRef keyHandTextures[6];
+extern float keyHandAspect[6],keyHandVisible,keyWeaponDrop;
+extern int keyHandIndex;
+extern float cornerPeekRoll;
+extern float cornerPeekAim[2];
 extern GpuTextureRef toastyTexture,romeroTexture;
+extern GpuTextureRef arcadePodiumTexture;
 extern float romeroAge,romeroAspect;
 extern int romeroCorner;
 extern float toastyVisible,toastyAspect;

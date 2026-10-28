@@ -1,3 +1,4 @@
+#include "../../assets/keyhands/images.h"
 /* The relit weapon: its light probe of the surroundings, draws, and the
    crosshair. */
 #include "internal.h"
@@ -129,6 +130,26 @@ static Image &relitWeaponImage(int key,const Image &source) {
     image.texture=gpuCreateTexture(GpuFormat::RGBA8,stride,h,packed.data(),stride*4);
     if(!image.texture) I_Error((char*)"Could not allocate a GPU texture");
     return images.emplace(key,std::move(image)).first->second;
+}
+static Image &pickupHandImage(int card,bool relit){
+    int key=-4100000-card;
+    auto found=images.find(key);
+    if(found==images.end()){
+        SDL_Surface *png=SDL_LoadPNG_IO(SDL_IOFromConstMem(keyhandData[card],keyhandSize[card]),true);
+        SDL_Surface *rgba=png?SDL_ConvertSurface(png,SDL_PIXELFORMAT_RGBA32):nullptr;SDL_DestroySurface(png);
+        if(!rgba)I_Error("Cannot decode key pickup hand");
+        // Sample at weapon-sprite resolution, then use the game's palette and lighting.
+        const int h=140,w=int(h*float(rgba->w)/rgba->h);
+        std::vector<byte> pixels(w*h*2);const byte *pal=(const byte*)W_CacheLumpName((char*)"PLAYPAL",PU_CACHE);
+        for(int y=0;y<h;++y)for(int x=0;x<w;++x){
+            int sx=std::clamp(int((x+.5f)*rgba->w/w),5,rgba->w-1),sy=std::min(rgba->h-1,int((y+.5f)*rgba->h/h));
+            const byte *c=(const byte*)rgba->pixels+sy*rgba->pitch+sx*4;int best=0,dist=INT_MAX;
+            for(int n=0;n<256;++n){int d=0;for(int k=0;k<3;++k){int v=int(c[k])-pal[n*3+k];d+=v*v;}if(d<dist){dist=d;best=n;}}
+            pixels[(y*w+x)*2]=byte(best);pixels[(y*w+x)*2+1]=c[3];
+        }
+        SDL_DestroySurface(rgba);found=images.emplace(key,upload(w,h,pixels.data())).first;
+    }
+    return relit?relitWeaponImage(key-100,found->second):found->second;
 }
 static Image &weaponImage(int lump) {return relitWeaponImage(INT_MIN/2-lump,lumpImage(lump,false));}
 static Image &fluidImage(const std::string&name,bool relit) try {
@@ -352,6 +373,35 @@ std::vector<SpriteDraw> weaponDraws(const Uniforms &camera) {
         }
         draws.push_back({&image,std::move(weapon),!invisible&&modded&&fluid[i].additive});
     }
+    // The pickup hand is a real weapon layer, before HUD and post-processing.
+    for(auto &draw:draws)for(auto &v:draw.vertices)v.y-=.85f*keyWeaponDrop;
+    if(keyHandVisible>0&&keyHandIndex>=0&&keyHandIndex<6&&player->mo){
+        bool relit=false; // Preserve painted shading, matching Fluid weapon sprites.
+        Image &image=pickupHandImage(keyHandIndex,relit);
+        std::vector<Vertex> hand;
+        float h=1.05f,w=h*image.width/image.height*.625f;
+        float light=sunLightAt(camera.eye[0],camera.eye[1],player->mo->subsector->sector,
+            flowLightAt(camera.eye[0],camera.eye[1],player->mo->subsector->sector,
+            seamLightAt(camera.eye[0],camera.eye[1],player->mo->subsector->sector,lighting(player->mo->subsector->sector))));
+        screenQuad(hand,.08f-w*.5f,1-(viewwindowy+viewheight)/100.f+h*keyHandVisible,w,h,0,0,image.width,image.height,light,
+            MODE_SCREEN|MODE_SPRITE|(invisible?MODE_FUZZ:0u)|(relit?MODE_RELIT:0u));
+        StaticSample statics;auto baked=bakedLightAt(camera.eye[0],camera.eye[1],camera.eye[2],player->mo->subsector->sector,&statics);
+        unsigned tint=packedLampTint(statics,light);unsigned mask[2]={};
+        float low[3],high[3];for(int c=0;c<3;++c){float at=camera.eye[c]+camera.forward[c]*10-camera.up[c]*5;low[c]=at-12;high[c]=at+12;}
+        for(unsigned n=0;n<flashes.count;++n)if(!fogOnly[n]&&flashes.lights[n].direction[3]<=0&&doom_flash_reaches_bounds(&flashes.lights[n],low,high))mask[n/32]|=1u<<(n%32);
+        for(auto &v:hand){v.red=std::min(.5f,baked[0]*.4f);v.green=std::min(.5f,baked[1]*.4f);v.blue=std::min(.5f,baked[2]*.4f);v.lampTint=tint;std::copy(mask,mask+2,v.lightMask);}
+        draws.push_back({&image,std::move(hand),false});
+    }
+    // Tilt the complete held weapon (including flashes and pickup hands) about
+    // the bottom of the view. HUD and crosshair remain upright.
+    if(std::abs(cornerPeekRoll)>.0001f){
+        float c=std::cos(cornerPeekRoll*.4f),s=std::sin(cornerPeekRoll*.4f);
+        float bottom=1-(viewwindowy+viewheight)/100.f;
+        for(auto &draw:draws)for(auto &v:draw.vertices){
+            float x=v.x*1.6f,y=v.y-bottom;
+            v.x=(x*c+y*s)/1.6f;v.y=bottom-x*s+y*c;
+        }
+    }
     return draws;
 }
 std::vector<Vertex> crosshairVertices(float worldW,float worldH) {
@@ -360,6 +410,7 @@ std::vector<Vertex> crosshairVertices(float worldW,float worldH) {
     float px=2/worldW,py=2/worldH;
     screenQuad(cross,-7*px,py,5*px,2*py,0,0,1,1);screenQuad(cross,2*px,py,5*px,2*py,0,0,1,1);
     screenQuad(cross,-px,7*py,2*px,5*py,0,0,1,1);screenQuad(cross,-px,-2*py,2*px,5*py,0,0,1,1);
+    for(auto &v:cross){v.x+=cornerPeekAim[0];v.y+=cornerPeekAim[1];}
     return cross;
 }
 } // namespace doom3d

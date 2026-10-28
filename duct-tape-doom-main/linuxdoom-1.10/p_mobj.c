@@ -35,6 +35,7 @@ rcsid[] = "$Id: p_mobj.c,v 1.5 1997/02/03 22:45:12 b1 Exp $";
 #include "p_local.h"
 #include "p_solid.h"
 #include "p_fluid.h"
+#include "m_arcade.h"
 #include "p_digwall.h"
 #include "sounds.h"
 
@@ -135,10 +136,12 @@ int P_RomeroStick(mobj_t *mo,float nx,float ny,float nz) {
 void P_RomeroDrunk(mobj_t *source) {
     double pitch=(freeaim&&source->player&&!netgame&&!demoplayback&&!demorecording)?fmax(-1.55,fmin(1.55,tourpitch)):0;
     fixed_t horizontal=(fixed_t)(cos(pitch)*FRACUNIT),vertical=(fixed_t)(sin(pitch)*FRACUNIT);
+    fixed_t x=source->x,y=source->y,z=source->z+32*FRACUNIT;
+    P_PeekShotOrigin(source,&x,&y,&z);
     for(int i=0;i<25;++i){
         // Hold a straight launch for half a second before the random steering.
         angle_t a=source->angle;
-        mobj_t *c=P_SpawnMobj(source->x,source->y,source->z+32*FRACUNIT,MT_ROCKET);
+        mobj_t *c=P_SpawnMobj(x,y,z,MT_ROCKET);
         c->target=source;c->threshold=ROMERO_CHILD;c->reactiontime=TICRATE/2;c->movecount=1;c->angle=a;
         c->momx=FixedMul(FixedMul(c->info->speed,horizontal),finecosine[a>>ANGLETOFINESHIFT]);
         c->momy=FixedMul(FixedMul(c->info->speed,horizontal),finesine[a>>ANGLETOFINESHIFT]);
@@ -642,6 +645,7 @@ int		iquetail;
 
 void P_RemoveMobj (mobj_t* mobj)
 {
+    Arcade_RemoveProjectile(mobj);
     P_TacticsRemove(mobj);
     P_AggressiveRemove(mobj);
     P_FluidRemove(mobj);
@@ -1077,9 +1081,11 @@ P_SpawnPlayerMissile
     y = source->y;
     z = source->z + 4*8*FRACUNIT;
 	
+    P_PeekShotOrigin(source,&x,&y,&z);
     th = P_SpawnMobj (x,y,z, type);
 
     th->target = source; // Sound routing needs the projectile's owner.
+    Arcade_TrackProjectile(th);
     if (th->info->seesound)
 	S_StartSound (th, th->info->seesound);
 

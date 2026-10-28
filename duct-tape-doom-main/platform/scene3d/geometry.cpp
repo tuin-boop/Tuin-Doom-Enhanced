@@ -6,6 +6,7 @@
 #include "../../../scene.h"
 #include "../../../map_world.h"
 #include "../../../skin_partition.h"
+extern "C" int director_view_active;
 extern const lab::Scene *SV_Scene();
 extern const lab::MapWorld *SV_MapWorld();
 extern float SV_DoorRenderZ(float fraction);
@@ -356,7 +357,7 @@ struct MirrorView { float eye[2],right[2]; };
 // and facing the mirrored camera. The player's own sprite gets only that one.
 static void addThing(mobj_t *thing,int i,const Uniforms &camera,float fraction,const Flash *beam,std::vector<Caster> &casters,
                      const MirrorView *mirror,const ThingLighting &lit) {
-    bool self=thing==players[displayplayer].mo;
+    bool self=thing==players[displayplayer].mo&&!director_view_active;
     if((self&&!mirror)||thing->sprite<0||thing->sprite>=numsprites) return;
     if(customGunPuff(thing)||liquidProjectileHidden(thing))return;
     DeathView death={thing->sprite,thing->frame,thing->angle,false,1,0,{}};
@@ -582,7 +583,7 @@ void geometry(const Uniforms &camera,float fraction) {
     static std::vector<ThingLighting> lightingJobs;lightingJobs.clear();
     for(int i=0;i<numsectors;++i) for(mobj_t *thing=sectors[i].thinglist;thing;thing=thing->snext) {
         bool inFront=mirrored&&glassMirrorPlane[0]*units(thing->x)+glassMirrorPlane[1]*units(thing->y)>glassMirrorPlane[3];
-        if((thing==players[displayplayer].mo&&!inFront)||thing->sprite<0||thing->sprite>=numsprites||
+        if((thing==players[displayplayer].mo&&!inFront&&!director_view_active)||thing->sprite<0||thing->sprite>=numsprites||
             (thing->frame&FF_FRAMEMASK)>=sprites[thing->sprite].numframes)continue;
         ThingLighting item{};item.thing=thing;item.sector=i;item.mirrored=inFront;
         interpolatedPosition(*thing,fraction,item.x,item.y,item.z);lightingJobs.push_back(item);

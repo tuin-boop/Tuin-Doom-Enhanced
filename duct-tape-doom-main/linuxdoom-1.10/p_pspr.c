@@ -1,3 +1,4 @@
+#include "m_arcade.h"
 #include "p_fluid.h"
 // Emacs style mode select   -*- C++ -*- 
 //-----------------------------------------------------------------------------
@@ -579,11 +580,13 @@ A_FireMissile
 {
     if (R_MuzzleFlash) R_MuzzleFlash(player->mo, player->readyweapon, -1);
 
+    Arcade_Shot(player);
     player->ammo[weaponinfo[player->readyweapon].ammo]--;
     if(romeroAlt[player-players]&&(player->cheats&CF_ROMERO)&&!netgame&&!demoplayback&&!demorecording)
         P_RomeroDrunk(player->mo);
     else P_SpawnPlayerMissile (player->mo, MT_ROCKET);
     romeroAlt[player-players]=0;
+    Arcade_EndShot();
 }
 
 
@@ -597,8 +600,10 @@ A_FireBFG
 {
     if (R_MuzzleFlash) R_MuzzleFlash(player->mo, player->readyweapon, -1);
 
+    Arcade_Shot(player);
     player->ammo[weaponinfo[player->readyweapon].ammo] -= deh_bfg_cells_per_shot;
     P_SpawnPlayerMissile (player->mo, MT_BFG);
+    Arcade_EndShot();
 }
 
 
@@ -613,6 +618,7 @@ A_FirePlasma
 {
     if (R_MuzzleFlash) R_MuzzleFlash(player->mo, player->readyweapon, -1);
 
+    Arcade_Shot(player);
     player->ammo[weaponinfo[player->readyweapon].ammo]--;
 
     P_SetPsprite (player,
@@ -620,6 +626,7 @@ A_FirePlasma
 		  weaponinfo[player->readyweapon].flashstate+(P_Random ()&1) );
 
     P_SpawnPlayerMissile (player->mo, MT_PLASMA);
+    Arcade_EndShot();
 }
 
 
@@ -705,6 +712,7 @@ A_FirePistol
     S_StartSound (player->mo, sfx_pistol);
 
     P_SetMobjState (player->mo, S_PLAY_ATK2);
+    Arcade_Shot(player);
     player->ammo[weaponinfo[player->readyweapon].ammo]--;
 
     P_SetPsprite (player,
@@ -713,6 +721,7 @@ A_FirePistol
 
     P_BulletSlope (player->mo);
     P_GunShot (player->mo, !player->refire);
+    Arcade_EndShot();
 }
 
 
@@ -731,6 +740,7 @@ A_FireShotgun
     S_StartSound (player->mo, sfx_shotgn);
     P_SetMobjState (player->mo, S_PLAY_ATK2);
 
+    Arcade_Shot(player);
     player->ammo[weaponinfo[player->readyweapon].ammo]--;
 
     P_SetPsprite (player,
@@ -741,6 +751,7 @@ A_FireShotgun
 	
     for (i=0 ; i<7 ; i++)
 	P_GunShot (player->mo, false);
+    Arcade_EndShot();
 }
 
 
@@ -763,6 +774,7 @@ A_FireShotgun2
     S_StartSound (player->mo, sfx_dshtgn);
     P_SetMobjState (player->mo, S_PLAY_ATK2);
 
+    Arcade_Shot(player);
     player->ammo[weaponinfo[player->readyweapon].ammo]-=2;
 
     P_SetPsprite (player,
@@ -782,6 +794,7 @@ A_FireShotgun2
 		      MISSILERANGE,
 		      bulletslope + ((P_Random()-P_Random())<<5), damage);
     }
+    Arcade_EndShot();
 }
 
 
@@ -801,6 +814,7 @@ A_FireCGun
     if (R_MuzzleFlash) R_MuzzleFlash(player->mo, player->readyweapon, -1);
 
     P_SetMobjState (player->mo, S_PLAY_ATK2);
+    Arcade_Shot(player);
     player->ammo[weaponinfo[player->readyweapon].ammo]--;
 
     P_SetPsprite (player,
@@ -812,6 +826,7 @@ A_FireCGun
     P_BulletSlope (player->mo);
 	
     P_GunShot (player->mo, !player->refire);
+    Arcade_EndShot();
 }
 
 
@@ -878,6 +893,7 @@ void A_BFGSpray (mobj_t* mo)
 	for (j=0;j<15;j++)
 	    damage += (P_Random()&7) + 1;
 
+	Arcade_Impact(mo,mo->target,linetarget);
 	P_DamageMobj (linetarget, mo->target,mo->target, damage);
     }
 }

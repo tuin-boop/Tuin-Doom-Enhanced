@@ -42,6 +42,7 @@ rcsid[] = "$Id: st_stuff.c,v 1.6 1997/02/03 22:45:13 b1 Exp $";
 
 #include "st_stuff.h"
 #include "st_lib.h"
+#include "../assets/helmets/faces.h"
 #include "r_local.h"
 
 #include "p_local.h"
@@ -331,6 +332,12 @@ static patch_t*		keys[NUMCARDS];
 
 // face status patches
 static patch_t*		faces[ST_NUMFACES];
+static patch_t *originalFaces[ST_NUMFACES];
+int st_helmet_style=0;
+static int appliedHelmet=-1;
+const unsigned char *ST_HelmetFace(int index){
+    return st_helmet_style>=1&&st_helmet_style<=4&&index>=0&&index<42?helmet_faces[st_helmet_style-1][index]:NULL;
+}
 
 // face background
 static patch_t*		faceback;
@@ -1156,6 +1163,10 @@ void ST_diffDraw(void)
 
 void ST_Drawer (boolean fullscreen, boolean refresh)
 {
+    if(appliedHelmet!=st_helmet_style){
+        for(int i=0;i<ST_NUMFACES;++i){const unsigned char *patch=ST_HelmetFace(i);faces[i]=patch?(patch_t*)patch:originalFaces[i];}
+        appliedHelmet=st_helmet_style;st_firsttime=true;
+    }
   
     st_statusbaron = (!fullscreen) || automapactive;
     st_firsttime = st_firsttime || refresh;
@@ -1247,6 +1258,8 @@ void ST_loadGraphics(void)
     }
     faces[facenum++] = W_CacheLumpName("STFGOD0", PU_STATIC);
     faces[facenum++] = W_CacheLumpName("STFDEAD0", PU_STATIC);
+    for(int face=0;face<ST_NUMFACES;++face)originalFaces[face]=faces[face];
+    appliedHelmet=-1;
 
 }
 
