@@ -572,8 +572,8 @@ std::vector<unsigned> hudPixels(const unsigned *pixels) {
         for(int i=0;i<SCREENWIDTH*SCREENHEIGHT;++i)if(arcade_rank_pixels[i]){
             unsigned tag=arcade_rank_pixels[i];int rank=tag>>24,x=i%SCREENWIDTH,y=i/SCREENWIDTH;
             float r,g,b;
-            if(rank==1){
-                float hue=float(time*.19+x*.035);hue-=std::floor(hue);
+            if(rank==1||rank==4){
+                float hue=float(time*(rank==4?.10:.19)+x*(rank==4?.009:.035));hue-=std::floor(hue);
                 auto channel=[&](float offset){float h=std::fmod(hue+offset,1.f);return .24f+.76f*std::clamp(std::abs(h*6-3)-1,0.f,1.f);};
                 r=channel(0);g=channel(2.f/3);b=channel(1.f/3);
                 float shine=.18f*std::pow(std::max(0.f,std::sin(float(time*2.2-x*.25))),12.f);

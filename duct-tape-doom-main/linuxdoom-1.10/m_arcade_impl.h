@@ -202,22 +202,23 @@ static void arcade_font(int x,int y,const char *text,int scale){
 /* Tilted main-menu signature, sharing the smooth true-colour rank pass. */
 int Menu_BrandOpen(void){return menuactive && currentMenu==&MainDef && !messageToPrint && !arcade_screen;}
 static void menu_brand(void){
-    const char *text="TuinDoomEnhanced";
-    unsigned char glyphs[160*6]={0};int width=0;
+    /* Keep the glyphs upright and pixel-aligned; tilt their baseline only.
+       Rotating a six-pixel font destroys its narrow stems and counters. */
+    const char *text="TUINDOOMENHANCED";
+    int width=arcade_width(text)*2;
+    int left=SCREENWIDTH-width-9;
     arcade_init_colors();
-    for(const char *t=text;*t;++t){unsigned c=(unsigned char)*t;int w=baby_widths[c-32];
-        for(int y=0;y<6;++y)for(int x=0;x<w;++x)glyphs[y*160+width+x]=baby_pixels[baby_offsets[c-32]+y*w+x];
-        width+=w;
-    }
-    /* Inverse-map a 12-degree upward tilt; shadow stays outside the letters. */
-    for(int pass=0;pass<2;++pass)for(int y=20;y<72;++y)for(int x=184;x<318;++x){
-        float dx=x-200.f-(pass?0:1),dy=y-58.f-(pass?0:1);
-        int u=(int)floorf((dx*.978148f-dy*.207912f)/1.15f);
-        int v=(int)floorf((dx*.207912f+dy*.978148f)/1.15f);
-        if(u<0||u>=width||v<0||v>=6)continue;
-        int value=glyphs[v*160+u];if(!value)continue;
-        arcade_rank_tint=pass?(1u<<24)|value:0;
-        arcade_box(x,y,1,1,pass?arcade_shades[(u/6)%7][value==2?0:3]:0);
+    for(int pass=0;pass<2;++pass){int cursor=0;
+        for(const char *t=text;*t;++t){unsigned c=(unsigned char)*t;int w=baby_widths[c-32];
+            int top=47-cursor/8;
+            for(int y=0;y<6;++y)for(int x=0;x<w;++x){
+                int value=baby_pixels[baby_offsets[c-32]+y*w+x];if(!value)continue;
+                arcade_rank_tint=pass?(4u<<24)|2:0;
+                if(!pass)arcade_box(left+cursor+x*2-1,top+y*2-1,4,4,0);
+                else arcade_box(left+cursor+x*2,top+y*2,2,2,arcade_colors[(cursor/16)%7]);
+            }
+            cursor+=w*2;
+        }
     }
     arcade_rank_tint=0;
 }
