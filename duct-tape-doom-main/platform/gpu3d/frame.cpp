@@ -1,3 +1,4 @@
+extern "C" int Menu_BrandOpen(void);
 /* One frame: the scene prepared by prepareFrame drawn in passes (liquid and
    glass reflections, depth for the mist, the main view with mist and overlays,
    bloom), then presented with the HUD and the settings panel. */
@@ -459,7 +460,7 @@ void I_Render3DPresent(const unsigned *pixels,const unsigned *palette) {
     std::vector<Vertex> cross;if(!director_view_active)cross=crosshairVertices(view.worldW,view.worldH);
     std::vector<const std::vector<Vertex>*> transient={&hud,&cross};
     arcadeRankQuad.clear();
-    if(Arcade_MenuOpen()&&arcadeRankTexture){
+    if((Arcade_MenuOpen()||Menu_BrandOpen())&&arcadeRankTexture){
         // Composite after palette/post-processing so purple stays purple.
         screenQuad(arcadeRankQuad,2*view.uiX/width-1,1-2*view.uiY/height,
             2*view.uiWidth/width,2*view.uiHeight/height,0,0,1,1);

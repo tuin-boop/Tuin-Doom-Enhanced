@@ -1,3 +1,4 @@
+extern "C" int Menu_BrandOpen(void);
 /* The scene's public state, its lifecycle and the per-frame entry points
    (prepareFrame), plus the backend-independent I_Render3D calls. */
 #include "internal.h"
@@ -564,7 +565,7 @@ std::vector<unsigned> hudPixels(const unsigned *pixels) {
     }
     std::vector<unsigned> overlay(pixels,pixels+SCREENWIDTH*SCREENHEIGHT);
     if(worldPending) for(int i=0;i<SCREENWIDTH*SCREENHEIGHT;++i)overlay[i]=(overlay[i]&0xffffff)|(unsigned)v_overlaymask[i]<<24;
-    if(Arcade_MenuOpen()){
+    if(Arcade_MenuOpen()||Menu_BrandOpen()){
         std::vector<unsigned> ranks(SCREENWIDTH*SCREENHEIGHT,0);
         // Render-time animation avoids the old eight-tic colour jumps.
         double time=SDL_GetTicksNS()*1e-9;

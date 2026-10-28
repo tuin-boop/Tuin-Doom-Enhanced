@@ -199,6 +199,28 @@ static void arcade_font(int x,int y,const char *text,int scale){
     }
     arcade_rank_tint=0;
 }
+/* Tilted main-menu signature, sharing the smooth true-colour rank pass. */
+int Menu_BrandOpen(void){return menuactive && currentMenu==&MainDef && !messageToPrint && !arcade_screen;}
+static void menu_brand(void){
+    const char *text="TuinDoomEnhanced";
+    unsigned char glyphs[160*6]={0};int width=0;
+    arcade_init_colors();
+    for(const char *t=text;*t;++t){unsigned c=(unsigned char)*t;int w=baby_widths[c-32];
+        for(int y=0;y<6;++y)for(int x=0;x<w;++x)glyphs[y*160+width+x]=baby_pixels[baby_offsets[c-32]+y*w+x];
+        width+=w;
+    }
+    /* Inverse-map a 12-degree upward tilt; shadow stays outside the letters. */
+    for(int pass=0;pass<2;++pass)for(int y=20;y<72;++y)for(int x=184;x<318;++x){
+        float dx=x-200.f-(pass?0:1),dy=y-58.f-(pass?0:1);
+        int u=(int)floorf((dx*.978148f-dy*.207912f)/1.15f);
+        int v=(int)floorf((dx*.207912f+dy*.978148f)/1.15f);
+        if(u<0||u>=width||v<0||v>=6)continue;
+        int value=glyphs[v*160+u];if(!value)continue;
+        arcade_rank_tint=pass?(1u<<24)|value:0;
+        arcade_box(x,y,1,1,pass?arcade_shades[(u/6)%7][value==2?0:3]:0);
+    }
+    arcade_rank_tint=0;
+}
 static void arcade_text(int x,int y,const char *s){int scale=arcade_width(s)*2<=304-x?2:1;arcade_font(x,y,s,scale);}
 static void arcade_center(int y,const char *s){int scale=arcade_width(s)*2<=288?2:1;arcade_font(160-arcade_width(s)*scale/2,y,s,scale);}
 static void arcade_small(int center,int y,const char *s){char label[32];snprintf(label,sizeof(label),"%s",s);while(arcade_width(label)*2>48&&strlen(label)>1)label[strlen(label)-1]=0;arcade_font(center-arcade_width(label),y,label,2);}
