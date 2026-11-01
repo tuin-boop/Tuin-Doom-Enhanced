@@ -143,7 +143,7 @@ boolean	P_SetMobjState (mobj_t* mobj, statenum_t state);
 void 	P_MobjThinker (mobj_t* mobj);
 
 void	P_SpawnPuff (fixed_t x, fixed_t y, fixed_t z);
-void 	P_SpawnBlood (fixed_t x, fixed_t y, fixed_t z, int damage);
+mobj_t* P_SpawnBlood (fixed_t x, fixed_t y, fixed_t z, int damage);
 mobj_t* P_SpawnMissile (mobj_t* source, mobj_t* dest, mobjtype_t type);
 void	P_SpawnPlayerMissile (mobj_t* source, mobjtype_t type);
 
@@ -283,6 +283,8 @@ extern mobj_t**		blocklinks;	// for thing chains
 // P_INTER
 //
 extern int		maxammo[NUMAMMO];
+int P_BoostChaingunEnabled(void);
+void P_UpdateChaingunAmmo(player_t *player);
 extern int		clipammo[NUMAMMO];
 
 void

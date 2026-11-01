@@ -281,7 +281,7 @@ EV_DoDoor
     while ((secnum = P_FindSectorFromLineTag(line,secnum)) >= 0)
     {
 	sec = &sectors[secnum];
-	if (sec->specialdata)
+	if (sec->specialdata || sec->rocketdoorhits >= 3)
 	    continue;
 		
 	
@@ -367,6 +367,7 @@ EV_VerticalDoor
     vldoor_t*	door;
     int		side;
 	
+    if(line->backsector && line->backsector->rocketdoorhits >= 3)return;
     side = 0;	// only front sides can be used
 
     //	Check for locks
@@ -772,40 +773,127 @@ EV_SlidingDoor
 
 /* Deliberately conservative prototype: a door must have a manual opener,
    no sector tag, and no other boundary action. Never consume Doom's RNG. */
+extern int p_breakablewalls;
+int p_keydoorshield=1,p_switchdoorshield=1;
+/* 1 manual, 2 remote, 3 blue, 4 red, 5 yellow. Unknown tagged movers stay intact. */
+static int P_DoorActionKind(int special,int manual)
+{
+    if(manual)switch(special){
+        case 1:case 31:case 117:case 118:return 1;
+        case 26:case 32:return 3;case 28:case 33:return 4;case 27:case 34:return 5;
+        default:return 0;
+    }
+    switch(special){
+        case 99:case 133:return 3;case 134:case 135:return 4;case 136:case 137:return 5;
+        case 2:case 3:case 4:case 16:case 29:case 42:case 46:case 50:case 61:case 63:
+        case 75:case 76:case 86:case 90:case 103:case 105:case 106:case 107:case 108:
+        case 109:case 110:case 111:case 112:case 113:case 114:case 115:case 116:return 2;
+        default:return 0;
+    }
+}
+static int P_BlowoutDoorKind(sector_t *sec)
+{
+    int i,kind=0,k;
+    for(i=0;i<sec->linecount;++i){line_t *l=sec->lines[i];
+        if(l->backsector!=sec)continue;
+        k=P_DoorActionKind(l->special,1);if(k>kind)kind=k;
+    }
+    if(sec->tag)for(i=0;i<numlines;++i){line_t *l=&lines[i];
+        if(l->tag!=sec->tag||!l->special)continue;
+        k=P_DoorActionKind(l->special,0);if(!k)return 0;if(k>kind)kind=k;
+    }
+    return kind;
+}
+/* Guard the owning solid, including blast fallback and impacts inside old craters. */
+int P_DoorShieldImpact(int sector, fixed_t x, fixed_t y, fixed_t z)
+{
+    sector_t *sec; int kind,i; line_t *best=0; int side=0;
+    double nearest=1e30;
+    if(!p_breakablewalls||sector<0||sector>=numsectors)return 0;
+    sec=&sectors[sector];
+    if(sec->rocketdoorhits>=3)return 0;
+    kind=P_BlowoutDoorKind(sec);
+    if(!((kind>=3&&p_keydoorshield)||(kind==2&&p_switchdoorshield)))return 0;
+    if(z<sec->ceilingheight)return 0;
+    for(i=0;i<sec->linecount;++i){
+        line_t *l=sec->lines[i]; sector_t *other;
+        double ax,ay,dx,dy,t,d;
+        if(!l->frontsector||!l->backsector)continue;
+        other=l->frontsector==sec?l->backsector:l->frontsector;
+        if(other==sec||other->ceilingheight<=sec->ceilingheight)continue;
+        ax=l->v1->x/(double)FRACUNIT;ay=l->v1->y/(double)FRACUNIT;
+        dx=l->dx/(double)FRACUNIT;dy=l->dy/(double)FRACUNIT;
+        t=((x/(double)FRACUNIT-ax)*dx+(y/(double)FRACUNIT-ay)*dy)/(dx*dx+dy*dy+1e-9);
+        if(t<0)t=0;if(t>1)t=1;
+        d=(x/(double)FRACUNIT-ax-dx*t)*(x/(double)FRACUNIT-ax-dx*t)+(y/(double)FRACUNIT-ay-dy*t)*(y/(double)FRACUNIT-ay-dy*t);
+        if(d<nearest){nearest=d;best=l;side=l->frontsector==sec;}
+    }
+    if(best&&R_DoorDamage)R_DoorDamage(best,side,x,y,z,-kind);
+    return 1;
+}
+/* Reject cuts whose bounding sphere overlaps the protected frame band.
+   Search geometry, not BSP adjacency: excavated walls can be outside their
+   original air sector, and a thin vestibule must not interrupt protection. */
+int P_DoorShieldVolume(fixed_t x,fixed_t y,fixed_t z,float reach)
+{
+    int i;double px=x/(double)FRACUNIT,py=y/(double)FRACUNIT,pz=z/(double)FRACUNIT;
+    double band=128+(reach>0?reach:0);
+    if(!p_breakablewalls||(!p_keydoorshield&&!p_switchdoorshield))return 0;
+    for(i=0;i<numlines;++i){
+        line_t *l=&lines[i];sector_t *door,*room;
+        double ax,ay,dx,dy,t,ex,ey;
+        if(!l->frontsector||!l->backsector||l->frontsector==l->backsector)continue;
+        door=l->backsector;room=l->frontsector;
+        if(door->ceilingheight>room->ceilingheight){sector_t *swap=door;door=room;room=swap;}
+        if(door->ceilingheight>=room->ceilingheight)continue;
+        if(pz<door->ceilingheight/(double)FRACUNIT-band||pz>room->ceilingheight/(double)FRACUNIT+band)continue;
+        ax=l->v1->x/(double)FRACUNIT;ay=l->v1->y/(double)FRACUNIT;
+        dx=l->dx/(double)FRACUNIT;dy=l->dy/(double)FRACUNIT;
+        /* Cheap bounds before classification, which may scan remote triggers. */
+        if(px<(dx<0?ax+dx:ax)-band||px>(dx>0?ax+dx:ax)+band||
+           py<(dy<0?ay+dy:ay)-band||py>(dy>0?ay+dy:ay)+band)continue;
+        t=((px-ax)*dx+(py-ay)*dy)/(dx*dx+dy*dy+1e-9);
+        if(t<0)t=0;if(t>1)t=1;
+        ex=px-ax-dx*t;ey=py-ay-dy*t;
+        if(ex*ex+ey*ey<=band*band&&P_DoorShieldImpact(door-sectors,x,y,z<door->ceilingheight?door->ceilingheight:z))return 1;
+    }
+    return 0;
+}
+int P_DoorShieldNearby(fixed_t x,fixed_t y,fixed_t z)
+{
+    return P_DoorShieldVolume(x,y,z,0);
+}
 int p_destructibledoors = 0;
-void P_RocketDoorImpact(mobj_t *rocket, line_t *line)
+int P_RocketDoorImpact(mobj_t *rocket, line_t *line)
 {
     sector_t *sec, *front;
     vldoor_t *door;
     fixed_t top;
-    int side, i, manual = 0;
-    if (!p_destructibledoors || demoplayback || demorecording || netgame ||
+    int side, kind;
+    if (!p_breakablewalls || !p_destructibledoors || demoplayback || demorecording || netgame ||
         !rocket || rocket->type != MT_ROCKET || !rocket->target ||
         !rocket->target->player || !line || !line->frontsector || !line->backsector)
-        return;
+        return 0;
     side = P_PointOnLineSide(rocket->x, rocket->y, line);
     sec = side ? line->frontsector : line->backsector;
     front = side ? line->backsector : line->frontsector;
-    if (sec->tag || sec->special || sec->rocketdoorhits >= 3 ||
+    if (sec->special || sec->rocketdoorhits >= 3 ||
         sec->ceilingheight >= front->ceilingheight ||
-        rocket->z + rocket->height <= sec->ceilingheight) return;
-    for (i = 0; i < sec->linecount; ++i)
-    {
-        line_t *edge = sec->lines[i];
-        if (!edge->special) continue;
-        if (edge->special != 1 && edge->special != 31 &&
-            edge->special != 117 && edge->special != 118) return;
-        if (edge->backsector == sec) manual = 1;
+        rocket->z + rocket->height <= sec->ceilingheight) return 0;
+    kind = P_BlowoutDoorKind(sec);
+    if (!kind) return 0;
+    if ((kind>=3 && p_keydoorshield) || (kind==2 && p_switchdoorshield)) {
+        if(R_DoorDamage)R_DoorDamage(line,side,rocket->x,rocket->y,rocket->z+rocket->height/2,-kind);
+        return 1; /* Block excavation before it damages the shielded face. */
     }
-    if (!manual) return;
     door = (vldoor_t *)sec->specialdata;
-    if (door && door->thinker.function.acp1 != (actionf_p1)T_VerticalDoor) return;
+    if (door && door->thinker.function.acp1 != (actionf_p1)T_VerticalDoor) return 0;
     top = P_FindLowestCeilingSurrounding(sec) - 4*FRACUNIT;
-    if (top <= sec->floorheight) return;
+    if (top <= sec->floorheight) return 0;
     ++sec->rocketdoorhits;
     if (R_DoorDamage) R_DoorDamage(line,side,rocket->x,rocket->y,
                                   rocket->z+rocket->height/2,sec->rocketdoorhits == 3);
-    if (sec->rocketdoorhits < 3) return;
+    if (sec->rocketdoorhits < 3) return 0;
     if (!door)
     {
         door = Z_Malloc(sizeof(*door), PU_LEVSPEC, 0);
@@ -816,10 +904,11 @@ void P_RocketDoorImpact(mobj_t *rocket, line_t *line)
     }
     door->type = open;
     door->direction = 1;
-    door->speed = 32*FRACUNIT;
+    door->speed = top-sec->ceilingheight+FRACUNIT; /* Clear in one tic, not a sliding opening. */
     door->topheight = top;
     door->topwait = VDOORWAIT;
     door->topcountdown = 0;
+    return 1;
 }
 
 /* Append-only save extension; old saves leave the zero-initialized health alone. */

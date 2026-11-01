@@ -642,7 +642,11 @@ EV_Teleport
   mobj_t*	thing );
 
 extern int p_destructibledoors;
-void P_RocketDoorImpact(mobj_t *rocket, line_t *line);
+int P_RocketDoorImpact(mobj_t *rocket, line_t *line);
+int P_DoorShieldVolume(fixed_t x, fixed_t y, fixed_t z, float reach);
+int P_DoorShieldNearby(fixed_t x, fixed_t y, fixed_t z);
+int P_DoorShieldImpact(int sector, fixed_t x, fixed_t y, fixed_t z);
+extern int p_keydoorshield,p_switchdoorshield;
 int P_SaveDoorDamage(unsigned char *data);
 void P_LoadDoorDamage(const unsigned char *data, int length);
 

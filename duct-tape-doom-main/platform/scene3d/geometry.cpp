@@ -438,7 +438,10 @@ static void addThing(mobj_t *thing,int i,const Uniforms &camera,float fraction,c
     // The quad for one view: that view's frame, facing along its right.
     auto emit=[&](std::map<int,std::vector<Vertex>> &out,unsigned seen,float rx,float ry,bool collar) {
         if(!death.ragdoll&&drawVoxel(out,*thing,death.sprite,death.frame,death.facing,x,y,z,light,baked,packedStatics,tint,camera))return;
-        int lump=firstspritelump+sf.lump[seen]; Image &image=lumpImage(lump,false);
+        int lump=firstspritelump+sf.lump[seen],spriteKey=-1-lump;
+        int bloodTint=thing->type==MT_BLOOD?(thing->flags&MF_TRANSLATION)>>MF_TRANSSHIFT:0;
+        Image &sourceImage=bloodTint?bloodSpriteImage(lump,bloodTint,spriteKey):lumpImage(lump,false);
+        Image &image=thing->player?playerColourImage(sourceImage,spriteKey,(thing->flags&MF_TRANSLATION)>>MF_TRANSSHIFT,spriteKey):sourceImage;
         float left=-(float)image.left,right=left+image.width,top=z+image.top,bottom=top-image.height;
         if((thing->flags&MF_COUNTKILL)&&thing->health>0){
             float floor=floorZ(&sectors[i]),ceiling=ceilZ(&sectors[i]);
@@ -455,7 +458,7 @@ static void addThing(mobj_t *thing,int i,const Uniforms &camera,float fraction,c
         float sink=!ragdoll?sinkInLiquid(thing,i,image,x,y,camera,collar):dollDown?sinkInLiquid(thing,i,image,x,y,camera,collar,true):0;top-=sink;bottom-=sink;
         float u0=flipped(seen)?image.width:0,u1=flipped(seen)?0:image.width;
         unsigned m=mode|((mode&MODE_RELIT)&&flipped(seen)?MODE_FLIPPED:0);
-        auto &vertices=out[-1-lump];size_t first=vertices.size();
+        auto &vertices=out[spriteKey];size_t first=vertices.size();
         if(collar&&!self)woundView(thing,players[displayplayer].mo,image,flipped(seen),x,y,fittedFeet-sink,top,bottom,rx,ry,posed?&pose:nullptr);
         // Wound holes (wounds.cpp): texels shot through, and their rims.
         std::vector<byte> holes;bool wounded=!self&&woundMask(*thing,image,flipped(seen),rx,ry,holes);

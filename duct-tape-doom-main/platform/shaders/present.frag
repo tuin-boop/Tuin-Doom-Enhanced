@@ -7,9 +7,21 @@ layout(set=2,binding=2) uniform sampler2D hud;
 layout(set=2,binding=3) uniform sampler3D paletteLUT;
 layout(std140,set=3,binding=0) uniform HudRect { vec4 hudRect; vec4 hudDock; };
 layout(std140,set=3,binding=1) uniform Camera CAMERA_BLOCK c;
+layout(set=2,binding=4) uniform sampler2D photoDepth;
+layout(std140,set=3,binding=2) uniform Photo { vec4 photo; vec4 shutter; };
 layout(location=0) out vec4 outColor;
+float photoZ(vec2 uv){float d=textureLod(photoDepth,uv,0).r;return c.projection.z*c.projection.w/(c.projection.w-d*(c.projection.w-c.projection.z));}
 void main() {
     vec4 color=textureLod(image,vUV,0.0);
+    if(photo.x>0.5&&photo.y>0.0){
+        float z=photoZ(vUV),coc=clamp(abs(z-photo.z)/max(z,1.0)*photo.y*5.0,0.0,12.0);
+        vec3 sum=color.rgb;float total=1.0;
+        for(int i=0;i<24;++i){float a=float(i)*2.399963,r=sqrt((float(i)+.5)/24.0);
+            vec2 uv=clamp(vUV+vec2(cos(a),sin(a))*r*coc/vec2(textureSize(image,0)),vec2(0),vec2(1));
+            float other=photoZ(uv);float w=other<z-max(8.0,photo.z*.08)?0.0:1.0;
+            sum+=textureLod(image,uv,0).rgb*w;total+=w;
+        }color.rgb=sum/total;
+    }
     // Heat haze: hot-air volumes left 1-heat in alpha. Rows of Doom pixels
     // slide sideways by whole Doom pixels at the tic rate, like an old
     // raster wobble; samples outside the hot area (weapon, HUD) are kept.
@@ -39,5 +51,12 @@ void main() {
         color.rgb=1.0-(1.0-color.rgb)*exp(-glow);
     }
     if(c.materials.w>0.0) color.rgb=texelFetch(paletteLUT,ivec3(round(saturate(color.rgb)*31.0)),0).rgb;
-    outColor=vec4(color.rgb,1.0);
+    if(photo.x>0.5){
+        float l=dot(color.rgb,vec3(.2126,.7152,.0722));
+        if(photo.w==1.0)color.rgb=vec3(l);
+        else if(photo.w==2.0)color.rgb=mix(color.rgb,vec3(l)*vec3(1.2,.96,.72),.65);
+        else if(photo.w==3.0)color.rgb=color.rgb*vec3(.80,1.03,1.20);
+        else if(photo.w==4.0)color.rgb=clamp((mix(vec3(l),color.rgb,1.35)-.5)*1.15+.5,0.0,1.0);
+    }
+    outColor=vec4(mix(color.rgb,vec3(1.0),shutter.x),1.0);
 }

@@ -28,6 +28,7 @@ void P_DigSetupPlayer(player_t *player) {
 
 int P_DigImpact(mobj_t *rocket) {
     p_diglastchanged=0;
+    if(R_DoorRocketImpact && R_DoorRocketImpact(rocket))return 0;
     if(SV_Active()){p_diglastchanged=SV_Explode(rocket);return p_diglastchanged;}
     if(P_GlobalDigEnabled()){p_diglastchanged=P_GlobalDigImpact(rocket);return p_diglastchanged;}
     if(!P_DigEnabled()||rocket->type!=MT_ROCKET)return 0;

@@ -56,8 +56,10 @@ void (*R_AcceleratedView)(player_t *player);
 void (*R_BeforeTic)(void);
 void (*R_MuzzleFlash)(mobj_t *source, int weapon, int projectile);
 void (*R_WeaponAttack)(player_t *player);
+void (*R_SawHit)(player_t *player,mobj_t *victim);
 void (*R_WeaponAux)(int alt, int reload);
 void (*R_RocketImpact)(mobj_t *rocket);
+int (*R_DoorRocketImpact)(mobj_t *rocket);
 void (*R_DoorMotion)(sector_t *sector);
 void (*R_CraterCrumble)(float x,float y,float z);
 void (*R_SurfaceChip)(float x,float y,float z,float nx,float ny,float nz);
@@ -926,3 +928,13 @@ void R_RenderPlayerView (player_t* player)
 void (*R_BFGHit)(mobj_t *ball,mobj_t *victim)=0;
 
 int (*R_WheelSlowMotion)(void) = 0;
+
+int r_photoactive=0;
+int r_photosteps=0;
+int r_photohelp=1,r_photodof=0,r_photostyle=0;
+float r_photofocus=128;
+
+char r_photoSavedPath[2048]={0};
+int r_photoNoticeUntil=0,r_photoSavedOK=0;
+const char *I_PhotoNotice(void){return r_photoactive&&I_GetTime()<r_photoNoticeUntil?r_photoSavedPath:0;}
+int I_PhotoSavedOK(void){return r_photoSavedOK;}

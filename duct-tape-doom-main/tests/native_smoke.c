@@ -1,3 +1,7 @@
+#include "p_arena.h"
+static void (*arena_original_sound)(int);
+static int arena_unsafe_calls,arena_safe_calls;
+static void arena_test_sound(int safe){if(safe)arena_safe_calls++;else arena_unsafe_calls++;if(arena_original_sound)arena_original_sound(safe);}
 #include "../platform/toasty_chance.h"
 /* Exercise an actual level and complete native save/load without desktop input. */
 #include <stdio.h>
@@ -430,7 +434,8 @@ static void global_hit_as(int line,int side,double u,double z,mobjtype_t type){
     line_t *l=&lines[line];vertex_t *a=side?l->v2:l->v1,*b=side?l->v1:l->v2;
     double tx=(double)(b->x-a->x)/FRACUNIT,ty=(double)(b->y-a->y)/FRACUNIT,len=hypot(tx,ty);tx/=len;ty/=len;
     double stand=2-P_GlobalDigDepth(line,side,(float)u,(float)z);
-    mobj_t rocket={0};rocket.type=type;rocket.radius=11*FRACUNIT;rocket.height=8*FRACUNIT;
+    mobj_t rocket={0};rocket.type=type;rocket.radius=11*FRACUNIT;rocket.subsector=R_PointInSubsector(rocket.x,rocket.y);
+            rocket.floorz=rocket.subsector->sector->floorheight;rocket.ceilingz=rocket.subsector->sector->ceilingheight;rocket.height=8*FRACUNIT;
     rocket.x=(fixed_t)((a->x/(double)FRACUNIT+u*tx+ty*stand)*FRACUNIT);
     rocket.y=(fixed_t)((a->y/(double)FRACUNIT+u*ty-tx*stand)*FRACUNIT);
     rocket.z=(fixed_t)((z-4)*FRACUNIT);rocket.momx=(fixed_t)(-ty*20*FRACUNIT);rocket.momy=(fixed_t)(tx*20*FRACUNIT);
@@ -1101,6 +1106,196 @@ void I_TestFrame(void)
         m->z=sz;players[0].viewz=sz+VIEWHEIGHT;
         puts("Save 5: existing damage permits two-way walking without adding impacts.");
         capture=gametic+4;return;
+    }
+    if(getenv("DOOM_TEST_CHAINGUN_BOOST")){
+        extern int p_boostchaingun,p_fluidweapons;
+        if(gamestate!=GS_LEVEL||!players[0].mo||gametic<12)return;
+        player_t *p=&players[0];p->readyweapon=wp_chaingun;
+        p_boostchaingun=1;p->backpack=0;P_UpdateChaingunAmmo(p);
+        if(p->maxammo[am_clip]!=200)I_Error("Unbackpacked bullet cap changed");
+        p->backpack=1;P_UpdateChaingunAmmo(p);
+        if(p->maxammo[am_clip]!=600)I_Error("Boosted backpack cap not 600");
+        for(int fluid=0;fluid<2;++fluid)for(int boost=0;boost<2;++boost){
+            p_fluidweapons=fluid;p_boostchaingun=boost;p->ammo[am_clip]=200;int tics=0;
+            for(int n=0;n<6;++n){p->refire=n/2;P_SetPsprite(p,ps_weapon,(n%2)?S_CHAIN2:S_CHAIN1);tics+=p->psprites[ps_weapon].tics;}
+            if(tics!=(boost?16:24)||p->ammo[am_clip]!=194)I_Error("Chaingun rate/ammo failed fluid %d boost %d ticks %d",fluid,boost,tics);
+        }
+        p_boostchaingun=0;p->ammo[am_clip]=550;P_UpdateChaingunAmmo(p);
+        if(p->maxammo[am_clip]!=400||p->ammo[am_clip]!=400)I_Error("Normal backpack cap not restored");
+        puts("PASS chaingun 50 percent cadence, six bullets for six shots, classic/Fluid, 200/600/400 caps");I_Quit();return;
+    }
+    if(getenv("DOOM_TEST_ARENA_TIMEOUT")){
+        if(gamestate!=GS_LEVEL||!players[0].mo||gametic<12)return;
+        float x,y,r;int left,normal=0,alive=0,total=totalkills;
+        if(!P_ArenaView(&x,&y,&r,&left))I_Error("Timeout fixture not active");
+        for(thinker_t *th=thinkercap.next;th!=&thinkercap;th=th->next)if(th->function.acp1==(actionf_p1)P_MobjThinker){
+            mobj_t *m=(mobj_t*)th;if(m->flags&MF_COUNTKILL){if(!(m->flags&MF_ARENA))normal++;else if(m->health>0)alive++;}
+        }
+        int size=P_ArenaSave(NULL),elapsed;unsigned char *data=malloc(size);P_ArenaSave(data);memcpy(&elapsed,data+size-4,4);
+        if(!alive)I_Error("Timeout fixture has no arena monsters");
+        arena_original_sound=R_ArenaAnnouncement;R_ArenaAnnouncement=arena_test_sound;
+        int ticks=120*TICRATE-elapsed;
+        for(int n=0;n<ticks-1;++n){
+            P_ArenaTick();
+            if(!P_ArenaView(&x,&y,&r,&left))I_Error("Arena timeout released too early");
+            if(n==ticks/2){P_ArenaSave(data);if(P_ArenaLoad(data,size)!=size)I_Error("Timer save/load rejected");}
+        }
+        P_ArenaTick();free(data);
+        if(P_ArenaView(&x,&y,&r,&left))I_Error("Arena did not time out at two minutes");
+        int after=0;
+        for(thinker_t *th=thinkercap.next;th!=&thinkercap;th=th->next)if(th->function.acp1==(actionf_p1)P_MobjThinker){
+            mobj_t *m=(mobj_t*)th;if(m->flags&MF_ARENA)I_Error("Timeout left arena monster");if(m->flags&MF_COUNTKILL)after++;
+        }
+        if(after!=normal||totalkills!=total-alive)I_Error("Timeout changed original monsters or kill total");
+        P_ArenaTick();if(P_ArenaView(&x,&y,&r,&left)||arena_safe_calls!=1)I_Error("Timeout relocked or repeated audio");
+        puts("PASS two-minute timeout, persisted timer, encounter-only cleanup, kill totals and one safe announcement");I_Quit();return;
+    }
+    if(getenv("DOOM_TEST_LOCKDOWN_STUCK")){
+        static int start=-1;static mobj_t *imp;static fixed_t x,y;static int moved;
+        if(gamestate!=GS_LEVEL||!players[0].mo||gametic<12)return;
+        if(start<0){
+            start=gametic;players[0].cheats|=CF_GODMODE;fixed_t nearest=0x7fffffff;
+            for(thinker_t *th=thinkercap.next;th!=&thinkercap;th=th->next)if(th->function.acp1==(actionf_p1)P_MobjThinker){
+                mobj_t *m=(mobj_t*)th;if(m->type!=MT_TROOP||m->health<=0)continue;
+                fixed_t d=P_AproxDistance(m->x-players[0].mo->x,m->y-players[0].mo->y);
+                if(d<nearest){nearest=d;imp=m;}
+            }
+            if(!imp)I_Error("Stuck fixture has no imp");x=imp->x;y=imp->y;
+            {extern fixed_t tmdropoffz;int fits=P_CheckPosition(imp,imp->x,imp->y);
+             printf("Imp footprint fits %d floor %d dropoff %d ceiling %d radius %d\n",fits,tmfloorz/FRACUNIT,tmdropoffz/FRACUNIT,tmceilingz/FRACUNIT,imp->radius/FRACUNIT);}
+
+            printf("Stuck imp at %d,%d z %d flags %x arena %d\n",x/FRACUNIT,y/FRACUNIT,imp->z/FRACUNIT,imp->flags,P_ArenaWave());fflush(stdout);
+        }
+        if(P_AproxDistance(imp->x-x,imp->y-y)>32*FRACUNIT)moved=1;
+        if(gametic-start>25*TICRATE){
+            printf("Imp now %d,%d z %d moved %d\n",imp->x/FRACUNIT,imp->y/FRACUNIT,imp->z/FRACUNIT,moved);
+            if(!moved)I_Error("Saved ledge imp failed to recover");
+            puts("PASS saved lockdown imp escapes ledge");I_Quit();
+        }return;
+    }
+    if(getenv("DOOM_TEST_ARENA_CRASH")){
+        static int start=-1;
+        if(gamestate!=GS_LEVEL||!players[0].mo||gametic<12)return;
+        if(start<0){
+            start=gametic;p_keyarena=1;players[0].cheats|=CF_GODMODE;
+            players[0].cards[it_yellowcard]=0;P_GiveCard(&players[0],it_yellowcard);
+            puts("CRASH fixture: yellow key arena triggered");fflush(stdout);
+        }
+        if(gametic-start==2){
+            extern int numspechit;extern boolean floatok;
+            float x,y,r;int left;
+            if(!P_ArenaView(&x,&y,&r,&left))I_Error("Saved fixture did not start arena");
+            numspechit=-1;floatok=true;
+            if(P_TryMove(players[0].mo,(fixed_t)((x+r+128)*FRACUNIT),(fixed_t)(y*FRACUNIT))||numspechit!=0||floatok)
+                I_Error("Arena block retained stale collision state");
+            puts("PASS arena block clears consumed special-line and float state");
+        }
+        if(gametic-start>350){
+            int spawned=0;
+            for(thinker_t *th=thinkercap.next;th!=&thinkercap;th=th->next)
+                if(th->function.acp1==(actionf_p1)P_MobjThinker&&(((mobj_t*)th)->flags&MF_ARENA))spawned++;
+            if(!spawned)I_Error("Saved arena fixture did not spawn any monsters");
+            printf("PASS saved yellow-key arena survives announcement and spawning (%d monsters)\n",spawned);I_Quit();
+        }
+        return;
+    }
+    if(getenv("DOOM_TEST_KEY_ARENA")){
+        static int stage=0,start=0,unsafe=0,waves=0;static unsigned savedserial;static fixed_t sx,sy,sz;
+        player_t *p=&players[0];mobj_t *m=p->mo;float ax,ay,ar;int remaining;
+        if(gamestate!=GS_LEVEL||!m||gametic<12)return;
+        if(!stage){
+            thinker_t *th;int oldtime=leveltime;
+            arena_original_sound=R_ArenaAnnouncement;R_ArenaAnnouncement=arena_test_sound;
+            sx=m->x;sy=m->y;sz=m->z;p_keyarena=1;p_arenaradius=512;P_ArenaTick();
+            for(th=thinkercap.next;th!=&thinkercap;th=th->next)if(th->function.acp1==(actionf_p1)P_MobjThinker){mobj_t *q=(mobj_t*)th;if(q!=m&&(q->flags&MF_COUNTKILL))P_RemoveMobj(q);}
+            for(int x=-384;x<=384;x+=48)for(int y=-384;y<=384;y+=48){
+                fixed_t nx=sx+x*FRACUNIT,ny=sy+y*FRACUNIT;
+                if(!P_CheckPosition(m,nx,ny)||tmceilingz-tmfloorz<m->height||abs(tmfloorz-sz)>24*FRACUNIT)continue;
+                P_UnsetThingPosition(m);m->x=nx;m->y=ny;m->z=tmfloorz;P_SetThingPosition(m);leveltime+=4;leveltime&=~3;P_ArenaTick();
+            }
+            P_UnsetThingPosition(m);m->x=sx;m->y=sy;m->z=sz;P_SetThingPosition(m);leveltime=oldtime;
+            p->cheats|=CF_GODMODE;p->ammo[am_clip]=200;p->cards[it_redcard]=0;P_GiveCard(p,it_redcard);P_GiveCard(p,it_redcard);stage=1;start=gametic;
+        }
+        if(stage==1&&P_ArenaView(&ax,&ay,&ar,&remaining)){
+            int bytes=P_ArenaSave(NULL);unsigned char *data=malloc(bytes);
+            if(remaining<7||remaining>25)I_Error("Arena wave count out of range");
+            if(ar!=768)I_Error("Arena radius not increased 50 percent");
+            if(!P_ArenaBlocks(m,(fixed_t)((ax+ar+64)*FRACUNIT),(fixed_t)(ay*FRACUNIT)))I_Error("Arena boundary allows escape");
+            P_ArenaSave(data);if(P_ArenaLoad(data,bytes)!=bytes)I_Error("Arena save rejected");free(data);
+            puts("PASS arena starts with 7-25 planned, boundary blocks, active state saves/loads");
+            I_Render3DScreenshotTo("key-arena.png");unsafe=1;stage=3;
+            G_SaveGame(7,"Arena validation");{extern void G_DoSaveGame(void);extern boolean sendsave;sendsave=false;G_DoSaveGame();}
+            savedserial=r_levelserial;G_LoadGame("doomsav7.dsg");return;
+        }
+        if(stage==3&&r_levelserial!=savedserial){
+            if(!P_ArenaView(&ax,&ay,&ar,&remaining))I_Error("Full save/load lost active arena");
+            puts("PASS full native save/load preserves arena wave and barrier");stage=2;
+        }
+        if(P_ArenaWave())waves|=1<<(P_ArenaWave()-1);
+        if(stage==2&&gametic-start<140){
+            for(thinker_t *th=thinkercap.next;th!=&thinkercap;th=th->next)if(th->function.acp1==(actionf_p1)P_MobjThinker&&(((mobj_t*)th)->flags&MF_ARENA))I_Error("Arena spawned before announcement finished");
+        }
+        if(stage==2&&gametic-start>250){
+            for(thinker_t *th=thinkercap.next;th!=&thinkercap;th=th->next)if(th->function.acp1==(actionf_p1)P_MobjThinker){mobj_t *q=(mobj_t*)th;if(q->flags&MF_ARENA)q->health=0;}
+            P_ArenaTick();if(!P_ArenaView(&ax,&ay,&ar,&remaining)){
+                if(P_ArenaBlocks(m,m->x+1024*FRACUNIT,m->y))I_Error("Cleared arena still blocks");
+                if(waves!=7)I_Error("Did not run all three waves: %d",waves);
+                if(arena_unsafe_calls!=1||arena_safe_calls!=1)I_Error("Arena announcements %d/%d",arena_unsafe_calls,arena_safe_calls);
+                puts("PASS three waves, full announcement lead-in, boundary release, unsafe/safe announcements exactly once");I_Quit();
+            }
+        }
+        if(gametic-start>1200)I_Error("Arena failed to start or finish, active %d",unsafe);
+        return;
+    }
+    if(getenv("DOOM_TEST_RED_SHIELD")){
+        static int start=-1;
+        if(gamestate!=GS_LEVEL||!players[0].mo||gametic<12)return;
+        if(start<0){
+            line_t *l=&lines[527];mobj_t rocket;int before;unsigned char *oldsolid,*newsolid;
+            if(gameepisode!=1||gamemap!=2)I_Error("Wrong reddoor fixture");
+            printf("REDDOOR special %d back %d\n",l->special,(int)(l->backsector-sectors));
+            memset(&rocket,0,sizeof(rocket));rocket.type=MT_ROCKET;rocket.flags=MF_MISSILE;
+            rocket.target=players[0].mo;rocket.height=8*FRACUNIT;rocket.radius=11*FRACUNIT;
+            rocket.x=(l->v1->x+l->v2->x)/2;rocket.y=(l->v1->y+l->v2->y)/2;
+            rocket.z=48*FRACUNIT;rocket.subsector=R_PointInSubsector(rocket.x,rocket.y);
+            p_keydoorshield=1;p_switchdoorshield=0;p_destructibledoors=0;before=SV_SaveSize();oldsolid=malloc(before);newsolid=malloc(before);SV_Save(oldsolid);
+            SV_Blast(&rocket,128);
+            if(SV_SaveSize()!=before)I_Error("Shield blast changed solid geometry");
+            SV_Save(newsolid);if(memcmp(oldsolid,newsolid,before))I_Error("Shield changed saved geometry bytes");free(oldsolid);free(newsolid);
+            if(!P_DoorShieldImpact(l->backsector-sectors,rocket.x,rocket.y,rocket.z))I_Error("Saved red door not protected");
+            {
+                float dx=l->dx/(float)FRACUNIT,dy=l->dy/(float)FRACUNIT,len=sqrtf(dx*dx+dy*dy);
+                fixed_t x=rocket.x+(fixed_t)(dy/len*32*FRACUNIT),y=rocket.y-(fixed_t)(dx/len*32*FRACUNIT);
+                if(!P_DoorShieldNearby(x,y,rocket.z))I_Error("Red door frame margin unprotected");
+                {
+                    int special=l->special;
+                    const int locks[]={26,27,28,32,33,34};
+                    fixed_t edgeX=l->v2->x+(fixed_t)(dx/len*110*FRACUNIT);
+                    fixed_t edgeY=l->v2->y+(fixed_t)(dy/len*110*FRACUNIT);
+                    float point[6]={edgeX/(float)FRACUNIT,edgeY/(float)FRACUNIT,48,dy/len,-dx/len,0};
+                    for(int k=0;k<6;++k){l->special=locks[k];
+                        if(!P_DoorShieldNearby(edgeX,edgeY,rocket.z))I_Error("Lock frame type %d unprotected",locks[k]);
+                    }
+                    l->special=special;
+                    before=SV_SaveSize();oldsolid=malloc(before);newsolid=malloc(before);SV_Save(oldsolid);
+                    SV_Impact(point,-1,32);
+                    // Centre beyond the band, but the crater overlaps its edge.
+                    point[0]+=dx/len*70;point[1]+=dy/len*70;
+                    SV_Impact(point,-1,64);
+                    if(SV_SaveSize()!=before)I_Error("Adjacent wall cut bypassed shield");
+                    SV_Save(newsolid);if(memcmp(oldsolid,newsolid,before))I_Error("Adjacent wall geometry changed");
+                    free(oldsolid);free(newsolid);
+                }
+                p_keydoorshield=0;
+                if(P_DoorShieldNearby(x,y,rocket.z)||P_DoorShieldImpact(l->backsector-sectors,rocket.x,rocket.y,rocket.z))I_Error("Disabled red shield still active");
+                SV_Blast(&rocket,128);
+                if(SV_SaveSize()==before)I_Error("Unshielded blast control did not excavate");
+                p_keydoorshield=1;
+            }
+            puts("PASS saved red door rejects blast excavation with blowout off; frame margin protected; toggle off permits damage");start=gametic;
+        }
+        if(gametic==start+3)I_Render3DScreenshotTo("reddoor-shield.png");
+        if(gametic>start+5)I_Quit();return;
     }
     if(getenv("DOOM_TEST_DOOR_SAVE")){
         if(gamestate!=GS_LEVEL||!players[0].mo||gametic<2)return;
@@ -1856,12 +2051,16 @@ void I_TestFrame(void)
         if(t>(extended?225:115))I_Quit();return;
     }
     if(getenv("DOOM_CAPTURE_DOORS")&&gamestate==GS_LEVEL){
-        static int start=-1,last=-1,closed=0,shots=0;static line_t *face;static fixed_t x,y;
+        static int start=-1,last=-1,closed=0,shots=0,types=0;static line_t *face;static fixed_t x,y;
         player_t *p=&players[0];
         if(start<0){
             for(int i=0;i<numlines;++i){line_t *l=&lines[i];sector_t *sec=l->backsector;
-                if(l->special==1&&sec&&!sec->tag&&!sec->special&&!sec->specialdata&&sec->floorheight==sec->ceilingheight){face=l;break;}}
+                if(l->special==1&&sec&&!sec->tag&&!sec->special&&!sec->specialdata&&sec->floorheight==sec->ceilingheight){
+                    if(!face||hypot((double)l->dx,l->dy)<hypot((double)face->dx,face->dy))face=l;
+                    if(!getenv("DOOM_CAPTURE_SMALL_DOOR"))break;
+                }}
             if(!face)I_Error("No door for capture");
+            fprintf(stderr,"Door test width %.1f units\n",hypot((double)face->dx,face->dy)/FRACUNIT);
             double dx=(double)face->dx/FRACUNIT,dy=(double)face->dy/FRACUNIT,len=sqrt(dx*dx+dy*dy);
             x=(fixed_t)(((double)face->v1->x+face->v2->x)/2+dy/len*96*FRACUNIT);
             y=(fixed_t)(((double)face->v1->y+face->v2->y)/2-dx/len*96*FRACUNIT);
@@ -1871,15 +2070,67 @@ void I_TestFrame(void)
         }
         int t=gametic-start;if(last==t)return;last=t;
 
-        if(t==8||t==12||t==22||t==30||t==40||t==65||t==163||t==175){fprintf(stderr,"Door capture tic %d height %d thinker %p hits %d\n",t,face->backsector->ceilingheight/FRACUNIT,face->backsector->specialdata,face->backsector->rocketdoorhits);I_Render3DScreenshot();}
+        if(t==8||t==12||t==22||t==30||t==40||t==65||t==145||t==153||t==163||t==175||t==225){fprintf(stderr,"Door capture tic %d height %d thinker %p hits %d\n",t,face->backsector->ceilingheight/FRACUNIT,face->backsector->specialdata,face->backsector->rocketdoorhits);I_Render3DScreenshot();}
         if(t>=75&&!closed){EV_VerticalDoor(face,p->mo);closed=1;}
+        if(t>=140&&!types){
+            types=1;
+            sector_t *sec=face->backsector;int original=face->special,tag=sec->tag;
+            const int manual[]={1,31,117,118,26,27,28,32,33,34};
+            mobj_t rocket={0};rocket.type=MT_ROCKET;rocket.target=p->mo;rocket.x=x;rocket.y=y;rocket.z=sec->floorheight+48*FRACUNIT;rocket.height=8*FRACUNIT;
+            p_destructibledoors=1;
+            for(int i=0;i<10;++i){face->special=manual[i];sec->rocketdoorhits=0;p_keydoorshield=1;
+                P_RocketDoorImpact(&rocket,face);
+                if(sec->rocketdoorhits!=(i<4?1:0))I_Error("Manual/key shield classification failed %d",manual[i]);
+                sec->rocketdoorhits=0;p_keydoorshield=0;P_RocketDoorImpact(&rocket,face);
+                if(sec->rocketdoorhits!=1)I_Error("Unlocked shield toggle failed %d",manual[i]);
+            }
+            line_t *trigger=face==lines?lines+1:lines;int ts=trigger->special,tt=trigger->tag;
+            const int remote[]={29,63,103,111,114,46,99,133,134,136};
+            face->special=0;sec->tag=trigger->tag=19222;
+            for(int i=0;i<10;++i){trigger->special=remote[i];sec->rocketdoorhits=0;p_keydoorshield=p_switchdoorshield=1;
+                P_RocketDoorImpact(&rocket,face);if(sec->rocketdoorhits)I_Error("Remote shield failed %d",remote[i]);
+                p_keydoorshield=p_switchdoorshield=0;P_RocketDoorImpact(&rocket,face);
+                if(sec->rocketdoorhits!=1)I_Error("Remote blowout disabled shield failed %d",remote[i]);
+            }
+            trigger->special=ts;trigger->tag=tt;sec->tag=tag;face->special=original;sec->rocketdoorhits=0;
+            p_keydoorshield=p_switchdoorshield=1;
+            puts("PASS manual, fast, key and remote door classification and independent shields");
+        }
         if(shots<3&&t>=150+10*shots){
             ++shots;
             mobj_t rocket={0};rocket.type=MT_ROCKET;rocket.target=p->mo;rocket.x=x;rocket.y=y;
             rocket.z=face->backsector->floorheight+48*FRACUNIT;rocket.height=8*FRACUNIT;
-            p_destructibledoors=1;P_RocketDoorImpact(&rocket,face);
+            if(shots==1){p_destructibledoors=0;P_RocketDoorImpact(&rocket,face);if(face->backsector->rocketdoorhits)I_Error("Disabled blowout counted a hit");}
+            p_destructibledoors=1;
+            /* Exercise the renderer's real solid-wall collision callback. */
+            double dx=(double)face->dx/FRACUNIT,dy=(double)face->dy/FRACUNIT,len=sqrt(dx*dx+dy*dy);
+            rocket.x=(face->v1->x+face->v2->x)/2+(fixed_t)(dy/len*8*FRACUNIT);
+            rocket.y=(face->v1->y+face->v2->y)/2-(fixed_t)(dx/len*8*FRACUNIT);
+            rocket.momx=(fixed_t)(-dy/len*20*FRACUNIT);rocket.momy=(fixed_t)(dx/len*20*FRACUNIT);
+            rocket.radius=11*FRACUNIT;rocket.subsector=R_PointInSubsector(rocket.x,rocket.y);
+            rocket.floorz=rocket.subsector->sector->floorheight;rocket.ceilingz=rocket.subsector->sector->ceilingheight;
+            if(!R_DoorRocketImpact)I_Error("No door impact callback");
+            if(shots==1){
+                extern int P_DigImpact(mobj_t *);int original=face->special;face->special=26;p_keydoorshield=1;
+                if(P_DigImpact(&rocket)||face->backsector->rocketdoorhits)I_Error("Shield did not intercept excavation");
+                face->special=original;I_Render3DScreenshot();puts("PASS shield intercepted rocket before excavation");
+            }
+            R_DoorRocketImpact(&rocket);
+            if(face->backsector->rocketdoorhits!=shots)I_Error("Door did not count exactly one rocket hit");
         }
-        if(t>190)I_Quit();return;
+        if(t>230){
+            if(face->backsector->rocketdoorhits!=3||face->backsector->ceilingheight-face->backsector->floorheight<56*FRACUNIT)I_Error("Third rocket did not clear door passage");
+            EV_VerticalDoor(face,p->mo);
+            {int special=face->special;char *message=p->message;face->special=26;
+             EV_VerticalDoor(face,p->mo);face->special=special;
+             if(p->message!=message)I_Error("Destroyed door still demands key");}
+            if(face->backsector->specialdata)I_Error("Blown door can close again");
+            {sector_t *sec=face->backsector;int tag=sec->tag;line_t trigger={0};trigger.tag=sec->tag=19222;
+             EV_DoDoor(&trigger,close);if(sec->specialdata)I_Error("Remote trigger restarted blown door");sec->tag=tag;
+             unsigned char *data=malloc(numsectors+8);int n=P_SaveDoorDamage(data);sec->rocketdoorhits=0;P_LoadDoorDamage(data,n);free(data);
+             if(sec->rocketdoorhits!=3)I_Error("Blown door state lost on reload");}
+            puts("PASS door blowout: disabled default, three hits, clear passage, permanently open");I_Quit();
+        }return;
     }
     if(getenv("DOOM_CAPTURE_SSG_FIDGET")) {
         static int captured=-1;
@@ -1888,6 +2139,29 @@ void I_TestFrame(void)
         }
     }
 
+    if(getenv("DOOM_CAPTURE_BARREL_AUDIT")&&gamestate==GS_LEVEL){
+        static int begun=-1,last=-1;player_t *p=&players[0];
+        if(begun<0){begun=gametic;p->cheats|=CF_GODMODE;R_SetViewSize(11,0);}
+        if(last==gametic)return;last=gametic;int t=gametic-begun;
+        int phase=t/160,local=t%160;
+        if(local==5){int w=phase==0?wp_pistol:phase==1?wp_chaingun:wp_shotgun;p->weaponowned[w]=true;p->readyweapon=w;p->pendingweapon=wp_nochange;p->ammo[am_clip]=200;p->ammo[am_shell]=50;P_SetPsprite(p,ps_weapon,weaponinfo[w].readystate);}
+        if(local>=20&&local<120&&(local-20)%(phase==0?14:phase==1?4:35)==0)P_FireWeapon(p);
+        if(local==125)I_Render3DScreenshotTo(phase==0?"audit-pistol-fumes.png":phase==1?"audit-chaingun-fumes.png":"audit-shotgun-fumes.png");
+        if(t==479){puts("PASS barrel smoke capture");I_Quit();}return;
+    }
+    if(getenv("DOOM_CAPTURE_WEAPON_DETAILS")&&gamestate==GS_LEVEL){
+        static int begun=-1,last=-1;player_t *p=&players[0];
+        if(begun<0){begun=gametic;p->cheats|=CF_GODMODE;R_SetViewSize(11,0);}
+        if(last==gametic)return;last=gametic;int t=gametic-begun;
+        if(t==5||t==105||t==205){int w=t==5?wp_shotgun:t==105?wp_supershotgun:wp_chainsaw;p->weaponowned[w]=true;p->readyweapon=w;p->pendingweapon=wp_nochange;p->ammo[am_shell]=50;P_SetPsprite(p,ps_weapon,weaponinfo[w].readystate);}
+        if(t==20||t==120)P_FireWeapon(p);
+        if(t==215&&R_SawHit){mobj_t *v=P_SpawnMobj(p->mo->x,p->mo->y,ONFLOORZ,MT_TROOP);R_SawHit(p,v);P_RemoveMobj(v);}
+        if(t==25)I_Render3DScreenshotTo("fluid-muzzle-smoke.png");
+        if(t==42)I_Render3DScreenshotTo("fluid-chamber-smoke.png");
+        if(t==152)I_Render3DScreenshotTo("fluid-ssg-smoke.png");
+        if(t==260)I_Render3DScreenshotTo("fluid-saw-details.png");
+        if(t==270){puts("PASS weapon details rendered");I_Quit();}return;
+    }
     if(getenv("DOOM_CAPTURE_ORIGINAL_SWITCH")&&gamestate==GS_LEVEL){
         static int begun=-1,last=-1;int t;player_t *p=&players[0];
         if(begun<0){begun=gametic;p->cheats|=CF_GODMODE;R_SetViewSize(11,0);for(int w=0;w<NUMWEAPONS;++w)p->weaponowned[w]=true;for(int a=0;a<NUMAMMO;++a)p->ammo[a]=200;}
@@ -1989,6 +2263,77 @@ void I_TestFrame(void)
     if(getenv("DOOM_TEST_GLOBAL_DIGGING")){test_global_digging();return;}
     if(getenv("DOOM_TEST_DIGGING")){test_digging();return;}
     if(getenv("DOOM_TEST_SETTINGS")){test_settings();return;}
+    if(getenv("DOOM_TEST_PHOTO_AUTO")){
+        static int stage=0,kind=0,wait=0;static mobj_t *subject;
+        extern void A_PosAttack(mobj_t *);extern void A_Explode(mobj_t *);
+        if(gamestate!=GS_LEVEL||!players[0].mo)return;
+        if(stage==0){
+            players[0].cheats|=CF_GODMODE;
+            r_photoauto=0;P_PhotoEvent(1,players[0].mo);if(r_photoevent)I_Error("Disabled auto photo triggered");
+            r_photoauto=1;r_photoscope=2;P_PhotoEvent(1,players[0].mo);if(r_photoevent)I_Error("Monster scope accepted player");
+            r_photoscope=0;r_photomask=0;P_PhotoEvent(1,players[0].mo);if(r_photoevent)I_Error("Disabled event triggered");
+            r_photomask=31;stage=1;
+        }
+        if(stage==1){
+            mobj_t *p=players[0].mo;r_photocooldown=0;r_photomask=1<<kind;
+            subject=P_SpawnMobj(p->x+48*FRACUNIT,p->y,p->z,kind==3?MT_BARREL:MT_POSSESSED);
+            subject->target=p;
+            if(kind==0)A_PosAttack(subject);
+            if(kind==1)P_DamageMobj(subject,p,p,1);
+            if(kind==2)P_DamageMobj(subject,p,p,20);
+            if(kind==3)A_Explode(subject);
+            if(kind==4)P_DamageMobj(subject,p,p,1000);
+            if(r_photoevent!=(1<<kind))I_Error("Wrong photo event %d expected %d",r_photoevent,1<<kind);
+            stage=2;wait=0;
+        }else if(stage==2){
+            if(++wait>100)I_Error("Auto photo did not open");
+            if(r_photoactive==1){
+                if(I_PhotoSubject()!=subject)I_Error("Auto photo did not focus event actor");
+                I_PhotoKey(SDL_SCANCODE_ESCAPE);
+                P_PhotoEvent(1,players[0].mo);if(r_photoevent)I_Error("Photo resume cooldown failed");
+                if(++kind==5){puts("PASS auto photo: shooting, damage, death, barrel, gib, filters, focus and cooldown");I_Quit();}
+                stage=1;
+            }
+        }
+        return;
+    }
+    if(getenv("DOOM_TEST_PHOTO")){
+        static int stage=0,frames=0,frozen=0;static fixed_t x,y,z;static angle_t angle;static mobj_t *photoZombie;
+        if(gamestate!=GS_LEVEL||!players[0].mo)return;
+        if(stage==0){
+            x=players[0].mo->x;y=players[0].mo->y;z=players[0].mo->z;angle=players[0].mo->angle;
+            photoZombie=P_SpawnMobj(x+FRACUNIT,y,z,MT_POSSESSED);
+            I_PhotoKey(SDL_SCANCODE_F8);if(!r_photoactive)I_Error("Photo mode did not open");frozen=leveltime;stage=1;
+        }
+        ++frames;
+        if(stage<4&&(leveltime!=frozen||players[0].mo->x!=x||players[0].mo->y!=y||players[0].mo->z!=z||players[0].mo->angle!=angle))I_Error("Photo mode changed gameplay state");
+        if(frames==15)I_Render3DScreenshotTo("photo-player.png");
+        if(frames==20){I_PhotoMove(160,-50);I_PhotoZoom(3);I_PhotoKey(SDL_SCANCODE_D);I_PhotoKey(SDL_SCANCODE_C);stage=2;}
+        if(frames==30){
+            extern const char *I_PhotoNotice(void);
+            extern int I_PhotoSavedOK(void);
+            if(!I_PhotoNotice()||!I_PhotoSavedOK()||!strstr(I_PhotoNotice(),"photo-player.png"))I_Error("Missing photo save location");
+            I_Render3DScreenshotTo("photo-dof.png");
+            if(I_PhotoNotice())I_Error("Screenshot notice leaked into next capture");
+        }
+        if(frames==35){I_PhotoKey(SDL_SCANCODE_TAB);if(I_PhotoSubject()!=photoZombie)I_Error("Photo Tab did not select nearest zombieman");I_PhotoKey(SDL_SCANCODE_H);stage=3;}
+        if(frames==45){I_Render3DScreenshotTo("photo-clean.png");}
+        if(frames==50){I_PhotoKey(SDL_SCANCODE_LEFTBRACKET);stage=4;}
+        if(stage==4&&leveltime>frozen){
+            if(leveltime!=frozen+1||!r_photoactive)I_Error("Left bracket did not advance exactly one tick");
+            I_PhotoKey(SDL_SCANCODE_RIGHTBRACKET);stage=5;
+        }
+        if(stage==5&&leveltime>frozen+1){
+            if(leveltime!=frozen+2||!r_photoactive)I_Error("Right bracket did not advance exactly one tick");
+            stage=6;
+        }
+        if(stage==6&&frames>65){
+            if(leveltime!=frozen+2)I_Error("Photo mode did not freeze after stepping");
+            I_PhotoKey(SDL_SCANCODE_ESCAPE);if(r_photoactive)I_Error("Photo mode did not close");stage=7;
+        }
+        if(stage==7&&leveltime>frozen+2){puts("PASS photo frame stepping, orbit/zoom, frozen world, DOF/colour controls, clean view and resume");I_Quit();}
+        if(frames>250)I_Error("Photo mode failed to resume");return;
+    }
     if(getenv("DOOM_TEST_WHEEL")){test_wheel();return;}
 
 

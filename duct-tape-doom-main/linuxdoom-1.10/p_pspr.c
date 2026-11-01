@@ -1,3 +1,4 @@
+#include "i_lan.h"
 #include "m_arcade.h"
 #include "p_fluid.h"
 // Emacs style mode select   -*- C++ -*- 
@@ -32,6 +33,7 @@ rcsid[] = "$Id: p_pspr.c,v 1.5 1997/02/03 22:45:12 b1 Exp $";
 
 #include "doomdef.h"
 int p_fluidfastpistol=1;
+int p_boostchaingun=0;
 #include "d_event.h"
 
 
@@ -86,7 +88,14 @@ P_SetPsprite
 	
 	state = &states[stnum];
 	psp->state = state;
-	psp->tics = state->tics;	// could be 0
+	psp->tics = state->tics; // could be 0
+        if(position==ps_weapon&&P_BoostChaingunEnabled()&&(stnum==S_CHAIN1||stnum==S_CHAIN2)&&state->tics>0){
+            /* Three shots span eight tics instead of twelve (exactly +50%).
+               refire counts two-shot cycles and is already saved with player. */
+            int phase=(player->refire%3)*2+(stnum==S_CHAIN2);
+            psp->tics=(state->tics*2+(phase%3))/3;
+            if(psp->tics<1)psp->tics=1;
+        }
 
 	if (state->misc1)
 	{
@@ -271,7 +280,7 @@ void P_FireWeapon (player_t* player)
         P_SetPsprite(player,ps_weapon,states[newstate].nextstate);
         // Fluid's FastPistol skips the four-tic wind-up entirely: 6+4 tics
         // between held shots. Other weapons retain their original cadence.
-        if(newstate!=S_PISTOL1||!p_fluidfastpistol)player->psprites[ps_weapon].tics+=states[newstate].tics;
+        if(newstate!=S_PISTOL1||!P_FluidFastPistolEnabled())player->psprites[ps_weapon].tics+=states[newstate].tics;
     } else {
         P_SetPsprite (player, ps_weapon, newstate);
         /* Fluid's default InstantFire rocket state lasts two tics, then
@@ -547,6 +556,7 @@ A_Saw
 	return;
     }
     S_StartSound (player->mo, sfx_sawhit);
+    if(R_SawHit)R_SawHit(player,linetarget);
 	
     // turn to face target
     angle = R_PointToAngle2 (player->mo->x, player->mo->y,
@@ -580,6 +590,7 @@ A_FireMissile
 {
     if (R_MuzzleFlash) R_MuzzleFlash(player->mo, player->readyweapon, -1);
 
+    P_PhotoEvent(1,player->mo);
     Arcade_Shot(player);
     player->ammo[weaponinfo[player->readyweapon].ammo]--;
     if(romeroAlt[player-players]&&(player->cheats&CF_ROMERO)&&!netgame&&!demoplayback&&!demorecording)
@@ -600,6 +611,7 @@ A_FireBFG
 {
     if (R_MuzzleFlash) R_MuzzleFlash(player->mo, player->readyweapon, -1);
 
+    P_PhotoEvent(1,player->mo);
     Arcade_Shot(player);
     player->ammo[weaponinfo[player->readyweapon].ammo] -= deh_bfg_cells_per_shot;
     P_SpawnPlayerMissile (player->mo, MT_BFG);
@@ -618,6 +630,7 @@ A_FirePlasma
 {
     if (R_MuzzleFlash) R_MuzzleFlash(player->mo, player->readyweapon, -1);
 
+    P_PhotoEvent(1,player->mo);
     Arcade_Shot(player);
     player->ammo[weaponinfo[player->readyweapon].ammo]--;
 
@@ -646,13 +659,13 @@ static boolean	bulletfree;
 void P_BulletSlope (mobj_t*	mo)
 {
     angle_t	an;
-    boolean	look = freeaim && mo->player
-	&& !demoplayback && !demorecording && !netgame;
+    boolean look = mo->player && (lan_session ? lan_pitch[mo->player-players]!=32767 : freeaim && !demoplayback && !demorecording && !netgame);
+    double shotpitch=lan_session&&mo->player?lan_pitch[mo->player-players]/10000.0:tourpitch;
 
-    bulletfree = look && !classicaim;
+    bulletfree = look && (lan_session || !classicaim);
     if (bulletfree)
     {
-	bulletslope = (fixed_t)(tan (tourpitch)*FRACUNIT);
+	bulletslope = (fixed_t)(tan (shotpitch)*FRACUNIT);
 	linetarget = NULL;
 	return;
     }
@@ -673,13 +686,16 @@ void P_BulletSlope (mobj_t*	mo)
     }
     bulletfree = look && !linetarget;
     if (bulletfree)
-	bulletslope = (fixed_t)(tan (tourpitch)*FRACUNIT);
+	bulletslope = (fixed_t)(tan (shotpitch)*FRACUNIT);
 }
 
 
 //
 // P_GunShot
 //
+static int fluidShotDamage;
+int P_FluidShotDamage(void) { return fluidShotDamage; }
+
 void
 P_GunShot
 ( mobj_t*	mo,
@@ -689,6 +705,7 @@ P_GunShot
     int		damage;
 	
     damage = 5*(P_Random ()%3+1);
+    fluidShotDamage += damage;
     angle = mo->angle;
 
     if (!accurate)
@@ -707,11 +724,12 @@ A_FirePistol
 ( player_t*	player,
   pspdef_t*	psp ) 
 {
-    if (R_MuzzleFlash) R_MuzzleFlash(player->mo, player->readyweapon, -1);
+    fluidShotDamage = 0;
 
     S_StartSound (player->mo, sfx_pistol);
 
     P_SetMobjState (player->mo, S_PLAY_ATK2);
+    P_PhotoEvent(1,player->mo);
     Arcade_Shot(player);
     player->ammo[weaponinfo[player->readyweapon].ammo]--;
 
@@ -722,6 +740,7 @@ A_FirePistol
     P_BulletSlope (player->mo);
     P_GunShot (player->mo, !player->refire);
     Arcade_EndShot();
+    if (R_MuzzleFlash) R_MuzzleFlash(player->mo, player->readyweapon, -1);
 }
 
 
@@ -733,13 +752,14 @@ A_FireShotgun
 ( player_t*	player,
   pspdef_t*	psp ) 
 {
-    if (R_MuzzleFlash) R_MuzzleFlash(player->mo, player->readyweapon, -1);
+    fluidShotDamage = 0;
 
     int		i;
 	
     S_StartSound (player->mo, sfx_shotgn);
     P_SetMobjState (player->mo, S_PLAY_ATK2);
 
+    P_PhotoEvent(1,player->mo);
     Arcade_Shot(player);
     player->ammo[weaponinfo[player->readyweapon].ammo]--;
 
@@ -752,6 +772,7 @@ A_FireShotgun
     for (i=0 ; i<7 ; i++)
 	P_GunShot (player->mo, false);
     Arcade_EndShot();
+    if (R_MuzzleFlash) R_MuzzleFlash(player->mo, player->readyweapon, -1);
 }
 
 
@@ -764,7 +785,7 @@ A_FireShotgun2
 ( player_t*	player,
   pspdef_t*	psp ) 
 {
-    if (R_MuzzleFlash) R_MuzzleFlash(player->mo, player->readyweapon, -1);
+    fluidShotDamage = 0;
 
     int		i;
     angle_t	angle;
@@ -774,6 +795,7 @@ A_FireShotgun2
     S_StartSound (player->mo, sfx_dshtgn);
     P_SetMobjState (player->mo, S_PLAY_ATK2);
 
+    P_PhotoEvent(1,player->mo);
     Arcade_Shot(player);
     player->ammo[weaponinfo[player->readyweapon].ammo]-=2;
 
@@ -786,6 +808,7 @@ A_FireShotgun2
     for (i=0 ; i<20 ; i++)
     {
 	damage = 5*(P_Random ()%3+1);
+    fluidShotDamage += damage;
 	angle = player->mo->angle;
 	angle += (P_Random()-P_Random())<<19;
 	la_freeaim = bulletfree;
@@ -795,6 +818,7 @@ A_FireShotgun2
 		      bulletslope + ((P_Random()-P_Random())<<5), damage);
     }
     Arcade_EndShot();
+    if (R_MuzzleFlash) R_MuzzleFlash(player->mo, player->readyweapon, -1);
 }
 
 
@@ -811,9 +835,10 @@ A_FireCGun
     if (!player->ammo[weaponinfo[player->readyweapon].ammo])
 	return;
 		
-    if (R_MuzzleFlash) R_MuzzleFlash(player->mo, player->readyweapon, -1);
+    fluidShotDamage = 0;
 
     P_SetMobjState (player->mo, S_PLAY_ATK2);
+    P_PhotoEvent(1,player->mo);
     Arcade_Shot(player);
     player->ammo[weaponinfo[player->readyweapon].ammo]--;
 
@@ -827,6 +852,7 @@ A_FireCGun
 	
     P_GunShot (player->mo, !player->refire);
     Arcade_EndShot();
+    if (R_MuzzleFlash) R_MuzzleFlash(player->mo, player->readyweapon, -1);
 }
 
 

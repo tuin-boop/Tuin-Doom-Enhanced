@@ -37,6 +37,7 @@ rcsid[] = "$Id: m_bbox.c,v 1.1 1997/02/03 22:45:10 b1 Exp $";
 #include <sys/ioctl.h>
 
 #include "i_system.h"
+#include "i_lan_unavailable.h"
 #include "d_event.h"
 #include "d_net.h"
 #include "m_argv.h"

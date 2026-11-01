@@ -1,3 +1,4 @@
+#include "p_arena.h"
 // Emacs style mode select   -*- C++ -*- 
 //-----------------------------------------------------------------------------
 //
@@ -300,6 +301,7 @@ boolean P_Move (mobj_t*	actor)
     tryy = actor->y + FixedMul(P_FluidMoveSpeed(actor),yspeed[actor->movedir]);
 
     try_ok = P_TryMove (actor, tryx, tryy);
+    P_ArenaMoveResult(actor,try_ok);
 
     if (!try_ok)
     {
@@ -861,6 +863,7 @@ void A_PosAttack (mobj_t* actor)
     damage = ((P_Random()%5)+1)*3;
     P_LineAttack (actor, angle, MISSILERANGE, slope, damage);
     P_AggressiveShotEnd(actor);
+    P_PhotoEvent(1,actor);
     P_TacticsFired(actor);
 }
 
@@ -890,6 +893,7 @@ void A_SPosAttack (mobj_t* actor)
 	P_LineAttack (actor, angle, MISSILERANGE, slope, damage);
     }
     P_AggressiveShotEnd(actor);
+    P_PhotoEvent(1,actor);
     P_TacticsFired(actor);
 }
 
@@ -915,6 +919,7 @@ void A_CPosAttack (mobj_t* actor)
     damage = ((P_Random()%5)+1)*3;
     P_LineAttack (actor, angle, MISSILERANGE, slope, damage);
     P_AggressiveShotEnd(actor);
+    P_PhotoEvent(1,actor);
     P_TacticsFired(actor);
 }
 
@@ -1671,7 +1676,7 @@ void A_Fall (mobj_t *actor)
 //
 void A_Explode (mobj_t* thingy)
 {
-    if(thingy->type==MT_BARREL)P_GlobalDigBarrelBlast(thingy);
+    if(thingy->type==MT_BARREL){P_PhotoEvent(8,thingy);P_GlobalDigBarrelBlast(thingy);}
     P_RadiusAttack ( thingy, thingy->target, 128 );
 }
 
@@ -1683,6 +1688,7 @@ void A_Explode (mobj_t* thingy)
 //
 void A_BossDeath (mobj_t* mo)
 {
+    if(mo->flags&(MF_ARENA|MF_ARENAOLD))return;
     thinker_t*	th;
     mobj_t*	mo2;
     line_t	junk;

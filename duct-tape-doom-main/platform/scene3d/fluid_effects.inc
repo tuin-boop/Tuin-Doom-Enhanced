@@ -1,3 +1,4 @@
+extern "C" int P_RocketDoorImpact(mobj_t *,line_t *);
 // FluidWeapons Player.zsc particle behavior, adapted to render-only bounded
 // batches. No actors, gameplay RNG, or damage are introduced by these effects.
 #include "fluid_effect_assets.inc"
@@ -5,6 +6,7 @@ struct FluidParticle {
     float x,y,z,vx,vy,vz,az,size,growth,alpha,age,life;
     int mask; bool add; std::array<float,3> color;
     float ax=0,ay=0,halfSize=.5f,fadeTics=0,roll=0,rollSpeed=0;
+    bool fullBright=false;bool ownerRelative=false;float ownerX=0,ownerY=0,ownerZ=0;
 };
 struct FluidBurst {float x,y,z;int type,tic;};
 struct FluidMark {int line,side,section,sector,mask;bool ceiling,flip;float u,z,size,born,fadeStart,life;std::array<float,3> color;unsigned supportRevision=~0u;};
@@ -13,6 +15,7 @@ static std::vector<FluidParticle> rubbleParticles;
 static std::vector<FluidBurst> fluidBursts;
 static std::vector<FluidMark> fluidMarks;
 static unsigned fluidSerial;
+static std::vector<FluidParticle> indoorSmoke;
 static int fluidImage(int mask) {
     // Private image keys cannot collide with WAD lumps or wall textures.
     int lump=100000000+mask,key=-1-lump;
@@ -24,7 +27,7 @@ static int fluidImage(int mask) {
     return lump;
 }
 static void resetFluidEffects() {
-    if(fluidSerial!=r_levelserial){rubbleParticles.clear();fluidParticles.clear();fluidBursts.clear();fluidMarks.clear();fluidSerial=r_levelserial;}
+    if(fluidSerial!=r_levelserial){indoorSmoke.clear();rubbleParticles.clear();fluidParticles.clear();fluidBursts.clear();fluidMarks.clear();fluidSerial=r_levelserial;}
 }
 static void fluidParticle(float x,float y,float z,int mask,bool add,std::array<float,3> color,float life,float size,
                           float vx=0,float vy=0,float vz=0,float az=0,float alpha=1,float growth=0) {
@@ -41,10 +44,87 @@ static void originalRocketParticle(float x,float y,float z,int mask,bool add,std
     size_t count=fluidParticles.size();
     fluidParticle(x,y,z,mask,add,color,life,size,vx,vy,vz,az,alpha,growth);
     if(fluidParticles.size()==count)return;
-    auto &p=fluidParticles.back();p.ax=ax;p.ay=ay;p.halfSize=2.5f/7.f;
+    auto &p=fluidParticles.back();p.ax=ax;p.ay=ay;
+    // HWSprite::ProcessParticle: square = 1/7; smooth/custom = 2.5/7.
+    // Using the smooth extent for square fumes makes a broad wall of smoke.
+    p.halfSize=mask==18?1.f/7.f:2.5f/7.f;
     p.fadeTics=fade?std::max(1.f,life-1):-1;p.roll=roll;p.rollSpeed=rollSpeed;
 }
 static int rocketRandom(int low,int high){return std::min(high,low+int(randomRange(0,float(high-low+1))));}
+// Effects.zsc MRIntWeaps_SmokeParticle: a moving visual thinker, not a HUD ribbon.
+void fluidFiringSmoke(player_t *player,int weapon,float ox,float oy,float power,float rotation,float offset){
+    if(!settings.fluidFiringSmoke||!player||!player->mo)return;
+    resetFluidEffects();auto *mo=player->mo;
+    float yaw=float(mo->angle*(2.0*doomPi/4294967296.0)),c=std::cos(yaw),s=std::sin(yaw),cp=std::cos(tourpitch),sp=std::sin(tourpitch);
+    int life=weapon==1?15:weapon==2?18:weapon==3?16:weapon==4?23:20;
+    float alpha=weapon==4?randomRange(.8f,.9f):(weapon==1?.15f:weapon==3?.2f:.1f)+power*(weapon==8?.2f:.1f);
+    float vertical=weapon==1?-1+offset:weapon==3?-1.6f:weapon==4?-1.6f-oy/.032f*.05f:-1.5f;
+    for(int barrel=0;barrel<(weapon==8?2:1);++barrel){
+        float side=ox+(weapon==8?(barrel?.25f:-.25f):weapon==3?(std::fmod(std::fmod(rotation,120.f)+120.f,120.f)-60)*.02f:0);
+        float forward=5*cp+oy*2*sp-(weapon==4?-3.2f-oy/.032f*.05f:vertical*2)*sp;
+        if(weapon==3)forward+=std::abs(side-ox)*sp;
+        float x=units(mo->x)+c*forward+s*side,y=units(mo->y)+s*forward-c*side;
+        float z=units(player->viewz)+5*sp-oy*cp+vertical*cp;
+        if(weapon==3)z-=std::abs(side-ox)*.5f*cp;
+        float scale=weapon==4?randomRange(.9f,1):weapon==8?.2f+power*.1f:randomRange(.2f,.3f);
+        float grow=weapon==4?randomRange(2.1f,2.8f):weapon==3?randomRange(1.4f,3):weapon==8?randomRange(1.4f,2.4f):randomRange(weapon==1?.9f:1,2.4f);
+        float gray=randomRange(weapon==4?40:weapon==2||weapon==8?140:170,weapon==4?50:weapon==2||weapon==8?150:180)/255.f;
+        float blue=weapon==4?gray:std::min(1.f,gray*randomRange(weapon==2?1.1f:1,1.4f)),sideSpeed=randomRange(-.01f,.01f);
+        size_t count=fluidParticles.size();
+        // NSHSA0 is normally alpha blended: grey RGB modulates SColor, not
+        // coverage. Folding grey into alpha made these puffs too transparent.
+        fluidParticle(x,y,z,16,false,{gray*fluidSmokeTint,gray*fluidSmokeTint,blue*fluidSmokeTint},float(life),1.28f*scale,c*.2f*cp+s*sideSpeed,s*.2f*cp-c*sideSpeed,.2f*sp+(weapon==4?-.05f:weapon==3?.03f:weapon==1?.005f*cp:.005f),0,alpha,grow*.1f);
+        if(fluidParticles.size()>count){auto &p=fluidParticles.back();p.fadeTics=float(life-(weapon==1?2:rocketRandom(1,3)));p.ownerRelative=true;p.ownerX=units(mo->x);p.ownerY=units(mo->y);p.ownerZ=units(player->viewz);}
+    }
+}
+// Source flowing smoke uses world particles 10 units from the view, not
+// screen-space ribbons. Movement leaves the old particles behind naturally.
+void fluidBarrelSmoke(player_t *player,int stream,float ox,float oy,float scale,float alpha,float speed,float fire){
+    struct Trail {float x=0,y=0,z=0;int tic=-100,weapon=-1;unsigned serial=~0u;};
+    static Trail trails[6];static float windX=0,windY=0;static int windTic=-1;
+    static float floor=0,bob=0,oldBob=0;static int bobTic=-1;static unsigned bobSerial=~0u;
+    static float lastRoll[6]={};
+    if(stream<0||stream>=6||!player||!player->mo||!settings.fluidHotSmoke)return;
+    resetFluidEffects();
+    auto &prev=trails[stream];auto *mo=player->mo;
+    if(bobSerial!=r_levelserial){floor=units(mo->floorz);bob=oldBob=0;bobSerial=r_levelserial;bobTic=-1;}
+    if(bobTic!=gametic){oldBob=bob;float delta=units(mo->floorz)-floor;floor+=delta*(std::abs(delta)>25?.5f:.05f);bob=units(player->viewz)-floor-units(player->viewheight);bobTic=gametic;}
+    if(windTic!=gametic&&gametic%2==0){
+        windTic=gametic;float limit=mo->subsector->sector->ceilingpic==skyflatnum?.4f:.1f;
+        windX=std::clamp(windX+randomRange(-.0025f,.0025f),-limit,limit);
+        windY=std::clamp(windY+randomRange(-.0025f,.0025f),-limit,limit);
+    }
+    float yaw=float(mo->angle*(2.0*doomPi/4294967296.0)),pitch=tourpitch;
+    float c=std::cos(yaw),s=std::sin(yaw),cp=std::cos(pitch),sp=std::sin(pitch);
+    float x=units(mo->x)+c*10*cp+s*ox*2+c*oy*2.7f*sp;
+    float y=units(mo->y)+s*10*cp-c*ox*2+s*oy*2.7f*sp;
+    float z=units(player->viewz)+oldBob-bob+sp*10-cp*oy*1.9f;
+    float vx=windX*speed,vy=windY*speed,vz=.15f*speed;
+    if(prev.serial!=r_levelserial||gametic-prev.tic>2||prev.weapon!=int(player->readyweapon)||std::hypot(x-prev.x,y-prev.y)>100)
+        {prev.x=x;prev.y=y;prev.z=z;}
+    float dx=prev.x-x,dy=prev.y-y,dz=prev.z-z,d=std::sqrt(dx*dx+dy*dy+dz*dz);
+    float step=.25f*scale,connect=d<=step*1.5f&&std::abs(dz)<1?step:d;
+    float attenuation=std::max(1.f,d*.15f/.6f);
+    float actRoll=0,rollDelta=0;
+    if(settings.fluidSmokeBio){float side=dx*s-dy*c,forward=dx*c+dy*s;
+        actRoll=-std::atan2(-dz*cp+forward*sp,side*std::cos(pitch*2)*(1-std::min(1.f,forward*.05f/std::max(.1f,side))));
+        rollDelta=std::remainder(actRoll-lastRoll[stream],float(2*doomPi));}
+    int count=std::min(64,std::max(1,int(std::ceil(connect/step))));
+    for(int i=0;i<count&&fluidParticles.size()<3072;++i){float t=d>0?std::min(d,i*step)/d:0;
+        originalRocketParticle(x+dx*t,y+dy*t,z+dz*t,settings.fluidSmokeBio?17:18,false,{(130-fire)/255.f,(130-fire)/255.f,(130-fire)/255.f},25/attenuation,1.3f*scale,vx,vy,vz,0,alpha/attenuation,0,0,0,true,lastRoll[stream]+rollDelta*t);
+    }
+    // Short-lived connector follows the muzzle while the older trail rises.
+    if(fire>60||mo->momx||mo->momy){
+        auto color=fire>100?std::array<float,3>{1,(fire-100)*2/255.f,0}:std::array<float,3>{(130+fire)/255.f,(130-fire)/255.f,(130-fire)/255.f};
+        int n=std::min(64,std::max(1,int(std::ceil(connect*.5f/step))));
+        for(int i=0;i<n&&fluidParticles.size()<3072;++i){float distance=i*step,t=d>0?distance/d:0,curve=distance/(connect*.5f+step),velocity=1-distance/(connect*.5f);
+            originalRocketParticle(x+dx*t*curve,y+dy*t*curve,z+dz*t*curve,18,false,color,1,scale,vx+units(mo->momx)*velocity,vy+units(mo->momy)*velocity,vz+(bob-oldBob)*velocity,0,alpha/attenuation,0,0,0,false,lastRoll[stream]+rollDelta*t);
+            fluidParticles.back().fullBright=fire>60;
+        }
+    }
+    lastRoll[stream]=actRoll;
+    prev={x+vx,y+vy,z+vz,gametic,int(player->readyweapon),r_levelserial};
+}
 // Cosmetic surface bursts use a separate, small budget and no gameplay RNG.
 // They remain available when the optional Fluid weapon replacement is disabled.
 void rubbleImpact(int type,float x,float y,float z,float nx,float ny,float nz) {
@@ -162,9 +242,41 @@ void fluidBFGHit(mobj_t *ball,mobj_t *victim) {
     float bx=units(ball->x),by=units(ball->y),bz=units(ball->z)+5,dx=x-bx,dy=y-by,dz=z+h*.5f-bz,len=std::sqrt(dx*dx+dy*dy+dz*dz);
     for(float d=3;d<len;d+=3){float f=d/len;fluidParticle(bx+dx*f+randomRange(-1,1),by+dy*f+randomRange(-1,1),bz+dz*f,12,true,{.39f,1,.39f},20,2,0,0,0,0,.3f);}
 }
-extern "C" int p_diglastchanged;
+extern "C" int p_diglastchanged,p_missile_hit_actor;
+int rocketDoorImpact(mobj_t *mo) {
+    // Shared solid collision bypasses Doom's ceilingline; trace the impacted face.
+    if(settings.doorBlowout&&mo&&mo->type==MT_ROCKET&&mo->target&&mo->target->player){
+
+        float vx=units(mo->momx),vy=units(mo->momy),vz=units(mo->momz),len=std::hypot(vx,vy);
+        WallHit hit;
+        if(!p_missile_hit_actor&&len>.01f&&firstSolidWall(units(mo->x),units(mo->y),units(mo->z)+units(mo->height)*.5f,vx/len,vy/len,vz/len,len+units(mo->radius)+8,hit))
+            return P_RocketDoorImpact(mo,&lines[hit.line]);
+    }
+    return 0;
+}
+// Room haze is render-only and bounded; never spawn gameplay actors.
+static void rocketRoomSmoke(mobj_t *mo){
+    if(!settings.fluidIndoorSmoke||!settings.fluidWeapons||!mo||mo->type!=MT_ROCKET)return;
+    auto *room=mo->subsector->sector;if(room->ceilingpic==skyflatnum)return;
+    resetFluidEffects();
+    float x=units(mo->x),y=units(mo->y),floor=units(room->floorheight),ceiling=units(room->ceilingheight);
+    if(ceiling-floor<16)return;
+    for(int i=0;i<9;++i){
+        float cx=x+randomRange(-100,100),cy=y+randomRange(-100,100);
+        if(R_PointInSubsector(fixed_t(cx*FRACUNIT),fixed_t(cy*FRACUNIT))->sector!=room)continue;
+        float z=std::clamp(units(mo->z)+randomRange(16,64),floor+8,ceiling-8);
+        bool merged=false;
+        for(auto &p:indoorSmoke)if(std::hypot(p.x-cx,p.y-cy)<56&&std::abs(p.z-z)<40){
+            p.alpha=std::min(.48f,p.alpha*std::max(0.f,1-p.age/p.life)+.10f);
+            p.age=0;p.life=525;p.size=std::min(220.f,p.size+20);merged=true;break;
+        }
+        if(!merged&&indoorSmoke.size()<48)
+            indoorSmoke.push_back({cx,cy,z,0,0,0,0,140,0,.12f,0,525,13,false,{.42f,.42f,.44f}});
+    }
+}
 void fluidProjectileImpact(mobj_t *mo) {
     if(liquidProjectileImpact(mo))return;
+    rocketRoomSmoke(mo);
     if(mo&&mo->type==MT_ROCKET&&p_diglastchanged>0){
         dropOldLevelImpacts();
         float dx=units(mo->momx),dy=units(mo->momy),len=std::max(.01f,std::hypot(dx,dy));
@@ -240,10 +352,28 @@ void fluidProjectileFlight(const mobj_t &mo) {
 // The original launcher supplies its own GunFlash overlays. Do not invent a
 // second world-space trail at the muzzle (it produces an oversized fire disc).
 void fluidRocketLaunch(mobj_t *) {}
+void fluidIndoorSmoke(mobj_t*source,int weapon){
+    if(!settings.fluidIndoorSmoke||!source||weapon==wp_fist||weapon==wp_chainsaw)return;
+    resetFluidEffects();auto *sec=source->subsector->sector;if(sec->ceilingpic==skyflatnum)return;
+    float x=units(source->x),y=units(source->y),z=std::max(units(sec->floorheight)+8,std::min(units(sec->ceilingheight)-30,units(source->z)+100));
+    for(auto &p:indoorSmoke)if(std::hypot(p.x-x,p.y-y)<60&&std::abs(p.z-z)<24){p.age=0;p.alpha=std::min(.25f,p.alpha+.015f);return;}
+    if(indoorSmoke.size()>=24)return;
+    indoorSmoke.push_back({x,y,z,0,0,0,0,100,0,.04f,0,350,13,false,{.4f,.4f,.43f}});
+}
 void tickFluidEffects() {
     resetFluidEffects();tickRubbleEffects();
+    if(!settings.fluidIndoorSmoke||!settings.fluidWeapons)indoorSmoke.clear();
+    for(auto &p:indoorSmoke){
+        ++p.age;
+        auto *room=R_PointInSubsector(fixed_t(p.x*FRACUNIT),fixed_t(p.y*FRACUNIT))->sector;
+        p.z=std::min(p.z+.06f,units(room->ceilingheight)-8);
+        p.size=std::min(240.f,p.size+.10f);
+    }
+    indoorSmoke.erase(std::remove_if(indoorSmoke.begin(),indoorSmoke.end(),[](const auto&p){return p.age>=p.life;}),indoorSmoke.end());
     if(!settings.fluidWeapons){fluidParticles.clear();fluidBursts.clear();fluidMarks.clear();return;}
-    for(auto &p:fluidParticles){p.age++;p.x+=p.vx;p.y+=p.vy;p.z+=p.vz;p.vx+=p.ax;p.vy+=p.ay;p.vz+=p.az;p.size+=p.growth;p.roll+=p.rollSpeed;}
+    for(auto &p:fluidParticles){
+        if(p.ownerRelative&&players[displayplayer].mo){auto &owner=players[displayplayer];float x=units(owner.mo->x),y=units(owner.mo->y),z=units(owner.viewz);p.x+=(x-p.ownerX)*.9f;p.y+=(y-p.ownerY)*.9f;p.z+=z-p.ownerZ;p.ownerX=x;p.ownerY=y;p.ownerZ=z;}
+        p.age++;p.x+=p.vx;p.y+=p.vy;p.z+=p.vz;p.vx+=p.ax;p.vy+=p.ay;p.vz+=p.az;p.size+=p.growth;p.roll+=p.rollSpeed;}
     fluidParticles.erase(std::remove_if(fluidParticles.begin(),fluidParticles.end(),[](const auto &p){return p.age>=p.life||p.size<=0;}),fluidParticles.end());
     for(auto &b:fluidBursts){int t=++b.tic;float x=b.x,y=b.y,z=b.z;
         if(b.type==MT_ROCKET){
@@ -320,12 +450,12 @@ static void drawFluidEffects(const Uniforms &camera) {
                 for(size_t k=1;k+1<polygon.size();++k)for(Point p:{polygon[0],polygon[k],polygon[k+1]})out.push_back(v(p));}
         }
     }
-    std::vector<const FluidParticle*> sorted;for(const auto &p:fluidParticles)sorted.push_back(&p);for(const auto &p:rubbleParticles)sorted.push_back(&p);
+    std::vector<const FluidParticle*> sorted;for(const auto&p:indoorSmoke)sorted.push_back(&p);for(const auto &p:fluidParticles)sorted.push_back(&p);for(const auto &p:rubbleParticles)sorted.push_back(&p);
     auto depth=[&](const auto *p){return (p->x-camera.eye[0])*camera.forward[0]+(p->y-camera.eye[1])*camera.forward[1]+(p->z-camera.eye[2])*camera.forward[2];};
     std::sort(sorted.begin(),sorted.end(),[&](auto a,auto b){return depth(a)>depth(b);});
     for(auto ptr:sorted){const auto &p=*ptr;if(depth(ptr)<1)continue;int lump=fluidImage(p.mask);const auto &im=fluidMasks[p.mask];
         float f=renderFraction-1,x=p.x+p.vx*f,y=p.y+p.vy*f,z=p.z+p.vz*f,h=std::max(.1f,p.size+p.growth*f)*p.halfSize,alpha=p.alpha*(p.fadeTics<0?1:std::clamp(1-(p.age+f)/(p.fadeTics>0?p.fadeTics:p.life),0.f,1.f));
-        auto v=[&](float u,float a,float tu,float tv){float r=p.roll+p.rollSpeed*f,c=std::cos(r),s=std::sin(r),old=u;u=c*u-s*a;a=s*old+c*a;Vertex b={x+camera.right[0]*u+camera.up[0]*a,y+camera.right[1]*u+camera.up[1]*a,z+camera.right[2]*u+camera.up[2]*a,tu,tv,alpha,p.mask==14?4096u:0u};b.red=p.color[0];b.green=p.color[1];b.blue=p.color[2];return b;};
+        auto v=[&](float u,float a,float tu,float tv){float r=p.roll+p.rollSpeed*f,c=std::cos(r),s=std::sin(r),old=u;u=c*u-s*a;a=s*old+c*a;Vertex b={x+camera.right[0]*u+camera.up[0]*a,y+camera.right[1]*u+camera.up[1]*a,z+camera.right[2]*u+camera.up[2]*a,tu,tv,alpha,(p.mask==14||p.fullBright)?4096u:0u};b.red=p.color[0];b.green=p.color[1];b.blue=p.color[2];return b;};
         auto &out=p.add?effectAddBatches[lump]:effectBatches[lump];quad(out,v(-h,h,0,0),v(h,h,im.w,0),v(h,-h,im.w,im.h),v(-h,-h,0,im.h));
     }
 }

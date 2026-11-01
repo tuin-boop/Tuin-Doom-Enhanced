@@ -16,12 +16,30 @@ void Weapons::adoptSwitchPose(const std::vector<Layer>& layers){
 }
 float Weapons::random(float a,float b){randomState=randomState*1664525u+1013904223u;return a+(b-a)*(randomState>>8)/16777215.f;}
 bool Weapons::supported(int w)const{return w>=0&&w<=8;}
-void Weapons::reset(int w){rocketFlash={};displayedSwayX=0;alternatePunch=true;ssgCatchAge=-1;shotgunCatchAge=-1;shotgunReturnWait=0;shotgunCatchMotion.reset();bumpHand={};bumpMotion.reset();fistEnd=-1;shells.clear();movementPose={};idlePose={};movementMotion.reset();idleMotion.reset();swayX=swayY=swayVX=swayVY=returnSpeed=bounce=bounceSpeed=0;bobState=0;idleDelay=0;idleStep=-1;idleWait=0;weapon=w;age=-1;pose={};pose.pivotX=pose.pivotY=.5f;motion.reset();motion.set(pose,false);frame=w==7?'C':'A';muzzle=oldMuzzle=0;plasmaFrame=0;spin=oldSpin=30;spinSpeed=gunFrame=0;soundEvents.clear();sawHold=0;charging=false;hand={};handMotion.reset();auxAction=0;auxAge=gripAge=-1;auxHand={};auxHandMotion.reset();altHeld=reloadHeld=oldAlt=oldReload=bfgIdle=manualReload=false;}
-void Weapons::attack(int w){if(w==6||w==7){auxAction=0;auxAge=-1;bfgIdle=false;pose={};}if(w==0){shot(w);return;}if(w==7){if(weapon!=w)reset(w);sawHold=10;if(age<0){age=0;chainsaw();motion.set(pose);}return;}if(w==6){if(weapon!=w)reset(w);age=0;charging=true;power=0;pose.pivotX=.5f;pose.pivotY=0;bfg();motion.set(pose);}}
-void Weapons::shot(int w,float strength){if(weapon!=w)reset(w);auxAction=0;auxAge=-1;manualReload=false;ssgCatchAge=-1;bfgIdle=false;if(w==6){charging=false;age=25;bfg();motion.set(pose);return;}age=0;power=std::clamp(strength,0.f,1.f);if(w!=3)pose={};frame='A';if(w==1){pose.pivotX=random(secondGrip?.35f:0,.5f);pose.pivotY=random(0,secondGrip?.3f:.4f);rotation=(pose.pivotX-.5f)*power;pistol();}else if(w==2){pose.pivotX=.5f;pose.pivotY=.5f;shotgun();}else if(w==3)chaingun();else if(w==4)rocket();else if(w==5){muzzle=-1.5f;plasma();}else if(w==8)superShotgun();else if(w==0)fist();else if(w==7){sawHold=10;chainsaw();}motion.set(pose);}
-void Weapons::tick(int w){if(weapon!=w)reset(w);motion.beforeTick();handMotion.beforeTick();auxHandMotion.beforeTick();bumpMotion.beforeTick();catchBulletMotion.beforeTick();tickShells();if(sawHold>0)--sawHold;oldMuzzle=muzzle;oldSpin=spin;if(age>=0){++age;if(w==1)pistol();else if(w==2)shotgun();else if(w==3)chaingun();else if(w==4)rocket();else if(w==5)plasma();else if(w==6)bfg();else if(w==8)superShotgun();else if(w==0)fist();else if(w==7)chainsaw();}else if(w==7)chainsaw();if(w==3){if(auxReady&&altHeld&&std::abs(spinSpeed)<10.f)--spinSpeed;if((age<0||age>4)&&!(auxReady&&altHeld))spinSpeed*=.85f;if(std::abs(spinSpeed)<.001f)spinSpeed=0;spin-=spinSpeed;gunFrame=std::abs(std::fmod(gunFrame+spinSpeed*.03f,4.f));frame='A'+int(gunFrame);}auxiliary();tickShotgunCatch();if(movementActive)tickMovement();motion.set(pose,!(w==5&&(age==4||age==7||age==17||age==22)));}
+void Weapons::switchWeapon(int w){
+    if(w==weapon)return;
+    // Holstered barrels finish cooling within three seconds, even after a
+    // long burst. Cancel delayed heat so putting a gun away cannot reheat it.
+    static constexpr float holsterCooling[9]={0,.05f,.025f,.085f,.1f,0,0,0,.015f};
+    if(weapon>=0&&weapon<9)storedHeat[weapon]=std::min(heat,holsterCooling[weapon]*105.f);
+    heatEvents.erase(std::remove_if(heatEvents.begin(),heatEvents.end(),
+        [&](const HeatEvent &e){return e.weapon==weapon;}),heatEvents.end());
+    auto retainedStains=sawStains;
+    auto pendingHeat=heatEvents;float savedRocketHeat=rocketHeat;auto saved=storedBarrels;if(weapon==3)saved=hotBarrels;
+    float values[9];std::copy(storedHeat,storedHeat+9,values);
+    reset(w);sawStains=retainedStains;heatEvents=pendingHeat;std::copy(values,values+9,storedHeat);storedBarrels=saved;rocketHeat=savedRocketHeat;
+    if(w>=0&&w<9)heat=storedHeat[w];if(w==3)hotBarrels=saved;
+}
+void Weapons::reset(int w){sawStains.clear();heatEvents.clear();std::fill(storedHeat,storedHeat+9,0.f);storedBarrels.clear();fireSmoke.clear();thirdIdleAge=-1;idleHand={};idleHandMotion.reset();smoke.clear();hotBarrels.clear();heat=blood=rocketHeat=0;smokeClock=0;rocketFlash={};displayedSwayX=0;alternatePunch=true;ssgCatchAge=-1;reloadVariant=0;reloadSplitHeld=false;shotgunCatchAge=-1;shotgunReturnWait=0;shotgunCatchMotion.reset();bumpHand={};bumpMotion.reset();fistEnd=-1;shells.clear();movementPose={};idlePose={};movementMotion.reset();idleMotion.reset();swayX=swayY=swayVX=swayVY=returnSpeed=bounce=bounceSpeed=0;bobState=0;idleDelay=0;idleStep=-1;idleWait=0;weapon=w;age=-1;pose={};pose.pivotX=pose.pivotY=.5f;motion.reset();motion.set(pose,false);frame=w==7?'C':'A';muzzle=oldMuzzle=0;plasmaFrame=0;spin=oldSpin=30;spinSpeed=gunFrame=0;soundEvents.clear();sawHold=0;charging=emptyPistol=rocketDontClose=false;hand={};handMotion.reset();auxAction=0;auxAge=gripAge=-1;gripHand={};gripMotion.reset();auxHand={};auxHandMotion.reset();altHeld=reloadHeld=oldAlt=oldReload=bfgIdle=manualReload=false;}
+void Weapons::attack(int w){if(w==6||w==7){auxAction=0;auxAge=-1;bfgIdle=false;pose={};}if(w==0){shot(w);return;}if(w==7){if(weapon!=w)switchWeapon(w);sawHold=10;if(age<0){age=0;chainsaw();motion.set(pose);}return;}if(w==6){if(weapon!=w)switchWeapon(w);age=0;charging=true;power=0;pose.pivotX=.5f;pose.pivotY=0;bfg();motion.set(pose);}}
+void Weapons::shot(int w,float strength){if(weapon!=w)switchWeapon(w);thirdIdleAge=-1;if(w!=0&&w!=7){float gain=w==1?float(int(effectRandom(1,3))):w==2?float(int(effectRandom(2,4))):w==3?effectRandom(1,1.1f):w==4?effectRandom(7,9):w==8?effectRandom(2,2.3f):0;
+gain*=smokeDuration;
+if(w==1||w==2)heatEvents.push_back({w,w==1?6:17,gain});
+else heat=std::min((w==4?35.f:w==8?105.f:525.f)*smokeDuration,heat+gain);
+if(w==3){int barrel=int(std::floor(spin/60));if(hotBarrels.size()<3)hotBarrels.push_back(barrel);else hotBarrels[0]=barrel;}}auxAction=0;auxAge=-1;manualReload=false;ssgCatchAge=-1;bfgIdle=false;if(w==6){charging=false;age=25;bfg();motion.set(pose);return;}age=0;power=std::clamp(strength,0.f,1.f);if(w!=3)pose={};frame='A';if(w==1){pose.pivotX=random(secondGrip?.35f:0,.5f);pose.pivotY=random(0,secondGrip?.3f:.4f);rotation=(pose.pivotX-.5f)*power;pistol();}else if(w==2){pose.pivotX=.5f;pose.pivotY=.5f;shotgun();}else if(w==3)chaingun();else if(w==4)rocket();else if(w==5){muzzle=-1.5f;plasma();}else if(w==8)superShotgun();else if(w==0)fist();else if(w==7){sawHold=10;chainsaw();}emitFireSmoke();motion.set(pose);}
+void Weapons::tick(int w){if(weapon!=w)switchWeapon(w);motion.beforeTick();handMotion.beforeTick();auxHandMotion.beforeTick();bumpMotion.beforeTick();catchBulletMotion.beforeTick();tickShells();if(sawHold>0)--sawHold;oldMuzzle=muzzle;oldSpin=spin;if(age>=0){++age;if(w==1)pistol();else if(w==2)shotgun();else if(w==3)chaingun();else if(w==4)rocket();else if(w==5)plasma();else if(w==6)bfg();else if(w==8)superShotgun();else if(w==0)fist();else if(w==7)chainsaw();}else if(w==7)chainsaw();if(w==3){if(auxReady&&altHeld&&std::abs(spinSpeed)<10.f)--spinSpeed;if((age<0||age>4)&&!(auxReady&&altHeld))spinSpeed*=.85f;if(std::abs(spinSpeed)<.001f)spinSpeed=0;spin-=spinSpeed;gunFrame=std::abs(std::fmod(gunFrame+spinSpeed*.03f,4.f));frame='A'+int(gunFrame);}auxiliary();tickShotgunCatch();tickSmoke();if(movementActive)tickMovement();motion.set(pose,!(w==5&&(age==4||age==7||age==17||age==22)));}
 void Weapons::tickMovement(){
-    movementMotion.beforeTick();idleMotion.beforeTick();
+    movementMotion.beforeTick();idleMotion.beforeTick();idleHandMotion.beforeTick();
     static const float mults[]={-.6f,-.5f,.8f,.4f,.5f,.8f,.1f,.6f,1.f};
     static const float rotations[]={.3f,.2f,-.1f,0,-.1f,0,0,-.15f,-.11f};
     float mult=mults[weapon];
@@ -56,8 +74,10 @@ void Weapons::tickMovement(){
         if(bobState>=0){idlePose.x+=random(-.005f,.015f);idlePose.y+=random(.01f,.02f);if(bobState>90||idlePose.y>1.35f)bobState=-bobState;else ++bobState;}
         else {idlePose.x-=random(-.005f,.015f);idlePose.y-=random(.01f,.02f);if(idlePose.y<0){idlePose={};bobState=0;}else if(!(bobState>=-1&&idlePose.y>0))++bobState;}
         if(walking||std::abs(swayX)>.0001f)idleDelay=std::min(0,idleDelay);else ++idleDelay;
-        bool gestures=weapon==0||weapon==1||weapon==2||weapon==4||weapon==8;
-        if(gestures&&idleStep<0&&idleDelay>35&&std::abs(bobState)<2){idleStep=0;idleWait=0;idleVariant=random(0,1)<.4f;idleDelay=-int(random(3,10.99f))*70;idlePose={};bobState=0;}
+        bool gestures=idleGestures&&(weapon==0||weapon==1||weapon==2||weapon==4||weapon==8);
+        if(gestures&&thirdIdleAge<0&&idleStep<0&&idleDelay>35&&std::abs(bobState)<2){idleStep=0;idleWait=0;idleVariant=random(0,1)<.4f;idleDelay=-int(random(3,10.99f))*70;idlePose={};bobState=0;
+            if(weapon==2&&random(0,1)<.35f){idleStep=-1;thirdIdleAge=0;idleHand={};idleHand.rotation=-30;idleHand.scaleX=.93f;idleHand.scaleY=.9f;idleHand.pivotX=idleHand.pivotY=1;idleHandMotion.set(idleHand,false);}
+        }
         // GunIdle1/GunIdle2: source offset/rotation steps, each held 1–2 tics.
         if(idleStep>=0&&--idleWait<=0){
             struct Step {int count;float x,y,r;};
@@ -68,6 +88,18 @@ void Weapons::tickMovement(){
             if(!applied){idleStep=-1;idlePose={};}idleWait=int(random(1,2.99f));
         }
     }else {idlePose={};bobState=0;idleStep=-1;idleDelay=std::min(0,idleDelay);}
+    if(!idle||walking||!idleGestures)thirdIdleAge=-1;
+    if(thirdIdleAge>=0){
+        // Shotgun GunIdle3 and LHandIdle: the original supporting-hand gesture.
+        struct Step{int count;float x,y,r,sx=0,sy=0;};
+        static const Step gun[]={{3,.5f,-.5f,-.5f},{3,2,1,-1},{2,.5f,1,-.05f},{3,.5f,.5f,.05f},{4,.25f,.5f,-.05f},{3,-.1f,.025f,-.05f},{2,-.1f,0,0},{3,-.15f,-.025f,0},{4,-.15f,-.1f,0},{3,.1f,.05f,.1f},{2,.5f,.5f,-.05f},{2,.5f,.5f,.05f},{3,.25f,.5f,-.05f},{3,-.1f,.025f,-.05f},{2,-.1f,0,0},{3,-.15f,-.025f,0},{3,-.15f,-.1f,0},{3,.1f,.05f,.1f},{4,.15f,.05f,0}};
+        static const Step arm[]={{5,-.5f,-.5f,-.5f,-.034f,-.02f},{2,-1.5f,-2,2},{5,-.25f,1.25f,.5f},{3,-.5f,1.25f,.4f},{4,-.5f,.1f,.6f},{3,-.15f,.025f,.25f},{2,-.15f,0,0},{3,-.11f,-1,.25f},{4,-.05f,-.5f,.5f},{3,-.025f,-.1f,.25f},{2,0,-.05f,0},{3,.025f,2,-.01f},{4,.05f,.1f,-.05f},{3,.1f,.025f,-.05f},{2,.2f,1,-.15f},{3,.4f,.5f,-.1f},{4,1,.5f,-.1f},{3,2,.1f,-.5f},{2,2.4f,.05f,-.4f}};
+        auto step=[](auto &pose,const auto&steps,int t){for(auto&s:steps){if(t<s.count){pose.x+=s.x;pose.y+=s.y;pose.rotation+=s.r;pose.scaleX+=s.sx;pose.scaleY+=s.sy;return;}t-=s.count;}};
+        if(thirdIdleAge<58){step(idlePose,gun,thirdIdleAge);step(idleHand,arm,thirdIdleAge);}
+        else {idlePose.x*=.6f;idlePose.y*=.6f;idlePose.rotation*=.6f;idleHand.x*=.6f;idleHand.y*=.6f;idleHand.rotation=(idleHand.rotation+30)*.6f-30;idleHand.scaleX=(idleHand.scaleX-.93f)*.6f+.93f;idleHand.scaleY=(idleHand.scaleY-.9f)*.6f+.9f;}
+        if(++thirdIdleAge>=64){thirdIdleAge=-1;idlePose={};}
+    }
+    idleHandMotion.set(idleHand);
     movementMotion.set(movementPose);idleMotion.set(idlePose);
 }
 void Weapons::ejectShell(){
@@ -135,8 +167,16 @@ void Weapons::tickShotgunCatch(){
 void Weapons::pistol(){
     // GunFire with the package's default InstantFire, single right hand.
     static const std::string frames="BBCFJGEDKBHHHHHHHAAAAAAAAAAAAAAA";
-    if(age>=int(frames.size())){age=-1;frame='A';pose={};return;}
+    if(age>=int(frames.size())){age=-1;frame=emptyPistol?'C':'A';pose={};return;}
     frame=frames[age];
+    if(emptyPistol&&age>=3){
+        frame=age<=5?'F':'C';float recover=secondGrip?.6f:.5f;
+        if(age<=5){pose.scaleX-=std::clamp(pose.scaleX-1+misalignment,0.f,secondGrip?.03f:.04f);pose.scaleY=pose.scaleX;pose.x*=recover;pose.y=-misalignment*2+(pose.y-misalignment*2)*recover;if(secondGrip)pose.rotation*=recover;else pose.rotation-=rotation*random(1.4f,1.5f);}
+        else if(age<=8){pose.scaleX=1-misalignment+(pose.scaleX-1+misalignment)*.3f;pose.scaleY=pose.scaleX;pose.x*=.3f;pose.y=-misalignment*2+(pose.y-misalignment*2)*.3f;if(secondGrip)pose.rotation*=.3f;else pose.rotation+=rotation*random(.8f,1);}
+        else if(age==9){pose.scaleX=pose.scaleY=1-misalignment;pose.x=random(-1,1);pose.y=-misalignment*2;pose.rotation=random(-.5f,.5f);}
+        else if(age<=11){pose.scaleX=1+(pose.scaleX-1)*.4f;pose.scaleY=pose.scaleX;pose.x*=.4f;pose.y*=.4f;pose.rotation*=.4f;}
+        else{pose.x=pose.y=pose.rotation=0;pose.pivotX=.5f;pose.pivotY=0;if(age>=14)age=-1;}return;
+    }
     if(age==2)ejectCasing(1);
     if(age<2){float scale=secondGrip?.05f+.01f*power:.07f+.02f*power;pose.scaleX+=scale;pose.scaleY+=scale;pose.x+=secondGrip?0:.4f+1.2f*power;pose.y+=secondGrip?2:3+.75f*power;pose.rotation+=rotation;}
     else if(age==2){pose.scaleX+=secondGrip?.008f:.01f+.0075f*power;pose.scaleY=pose.scaleX;pose.x+=secondGrip?0:.2f+.1f*power;pose.rotation+=rotation;misalignment=(pose.scaleX-1.155f)*.8f;recoveryX=random(-2,2);recoveryY=random(2,8)*(random(0,1)<.5f?-1:1);}
@@ -185,8 +225,11 @@ void Weapons::shotgun(){
     else if(age>=36){pose={};pose.pivotX=.5f;}
 }
 void Weapons::rocket(){
-    if(age>=16){age=-1;frame='A';pose={};return;}
-    frame=age<10?'C':age==10?'B':'A';
+    if(age<=5)rocketHeat=std::min(120.f,rocketHeat+20);else if(age<=10)rocketHeat=std::min(120.f,rocketHeat+1);
+    if(age>=16){age=-1;frame=rocketDontClose?'C':'A';pose={};return;}
+    if(age==0)rocketDontClose=false;
+    if(age==10)rocketDontClose=int(random(0,100.999f))==100;
+    frame=age<10||rocketDontClose?'C':age==10?'B':'A';
     if(age==0){pose.pivotX=.5f;pose.pivotY=0;rotation=random(-2,2);}
     else if(age<=2){pose.scaleX+=.4f;pose.scaleY+=.4f;pose.x+=rotation;pose.y+=2;pose.rotation-=rotation;}
     else if(age<=4){pose.scaleX+=.15f;pose.scaleY+=.15f;pose.x+=rotation*.5f;pose.y+=7;}
@@ -312,7 +355,8 @@ void Weapons::chaingun(){
     else{age=-1;pose.x=pose.y=0;}
 }
 void Weapons::superShotgun(){
-    // GunFire/GunReload, standard two-handed reload variant.
+    // GunFire/GunReload: source ReloadVar=-1/0 changes the opening gesture.
+    if(age==15&&reloadVariant<0&&!manualReload)age=16;
     frame='A';
     // GunCoolIdle branches immediately after the split barrels appear,
     // before the two normal-reload offset/rotation steps (ages 24 and 25).
@@ -322,17 +366,17 @@ void Weapons::superShotgun(){
     if(age==0){pose.pivotX=.5f+random(-.15f,.15f)*power;pose.pivotY=.3f+.3f*power;pose.scaleX=1.3f+.1f*power;pose.scaleY=1+(.3f+.1f*power)*1.8f;pose.x=-(pose.pivotX-.5f)*2;pose.y=14+4*power;pose.rotation=(pose.pivotX-.5f)*4*power;}
     else if(age==1){pose.scaleX+=.07f+.015f*power;pose.scaleY+=(.07f+.015f*power)*1.5f;pose.x-=pose.pivotX-.5f;pose.y+=7+2*power;pose.rotation+=(pose.pivotX-.5f)*power;}
     else if(age<9){float r=age<6?.7f:.8f;pose.x*=r;pose.y*=r;pose.rotation*=r;pose.scaleX=1+(pose.scaleX-1)*r;pose.scaleY=1+(pose.scaleY-1)*r;}
-    else if(age==9){pose={};pose.x=random(-2,2);pose.y=random(0,2);pose.rotation=random(-.5f,.5f);}
+    else if(age==9){reloadVariant=random(0,1)<.5f?-1:0;reloadSplitHeld=false;pose={};pose.x=random(-2,2);pose.y=random(0,2);pose.rotation=random(-.5f,.5f);}
     else if(age==10){if(manualReload)soundEvents.push_back("SSGOpen");frame='B';pose.pivotX=.5f;pose.pivotY=1;pose.x=-random(8,12);pose.y=-random(3,5);}
     else if(age<13){frame='C';pose.x-=10;pose.y-=5;pose.scaleY=.9f;if(age==12){pose.pivotX=.6f;pose.pivotY=.3f;pose.scaleX=1.1f;pose.scaleY=1.15f;}}
     else if(age<=22){frame='D';
         if(age<15){pose.x-=20;pose.y-=5;pose.scaleX=age==13?.9f:.95f;pose.scaleY=age==13?.85f:.925f;}
-        else if(age<=16){pose.x-=10;pose.y-=2;pose.rotation+=random(2,4);pose.scaleX=pose.scaleY=1;}
-        else if(age<=18){pose.x-=3;pose.y-=1;pose.rotation+=random(1.5f,2);pose.pivotX=.5f;pose.pivotY=1;}
-        else if(age==19){pose.rotation-=random(.01f,.1f);pose.x-=random(.01f,.1f);pose.y-=random(.25f,.5f);}
+        else if(age<=16){float mult=age==16&&reloadVariant?2.f:1.f;pose.x-=10*mult;pose.y-=2*mult;pose.rotation+=random(2,4)*mult;if(age==15||reloadVariant){pose.scaleX+=.05f;pose.scaleY+=.075f;}else pose.scaleX=pose.scaleY=1;}
+        else if(age<=18){pose.scaleX=pose.scaleY=1;pose.x-=3;pose.y-=1;pose.rotation+=random(1.5f,2);pose.pivotX=.5f;pose.pivotY=1;}
+        else if(age==19){float r=random(.01f,10);pose.rotation-=r;pose.x-=r;pose.y-=random(.25f,.5f);}
         else if(age==20){pose.rotation=-8;pose.scaleX-=.05f;pose.scaleY-=.05f;pose.x+=30;pose.y+=8;}
         else if(age==21){pose.rotation-=20;pose.scaleX-=.1f;pose.scaleY-=.1f;pose.x+=70;pose.y+=20;}
-        else {pose.rotation=-90;pose.scaleX-=.025f;pose.scaleY-=.025f;pose.x+=60;pose.y+=16;}
+        else {float mult=reloadVariant?.2f:1.f;pose.rotation=-90;pose.scaleX-=.025f*mult;pose.scaleY-=.025f*mult;pose.x+=60*mult;pose.y+=16*mult;}
     }else if(age<=25){frame='J';if(age==23){pose={};pose.x=pose.y=45;pose.rotation=50;pose.pivotX=.5f;pose.pivotY=0;}else{pose.x-=25;pose.y-=25;pose.rotation-=age==24?30:20;}}
     else if(age<=40){frame='F';
         if(age==26){pose.x+=random(6,9);pose.y+=random(6,9);}
@@ -350,6 +394,7 @@ void Weapons::superShotgun(){
     else if(age<=51){frame='Q';pose.x=age==50?-25.f:-30.f;pose.y=age==50?21.f:30.f;pose.rotation=0;}
     else if(age==52){if(manualReload)soundEvents.push_back("SSGClose");pose.scaleX=.8f;pose.scaleY=2.5f;pose.pivotX=.5f;pose.pivotY=0;pose.x=-34;pose.y=36;}
     else {pose.x*=.65f;pose.y*=.65f;pose.rotation*=.65f;pose.scaleX=1+(pose.scaleX-1)*.4875f;pose.scaleY=1+(pose.scaleY-1)*.4875f;}
+    if(age==23&&reloadVariant<0&&!manualReload&&!reloadSplitHeld){reloadSplitHeld=true;--age;}
     if(manualReload)return; // GunCoolIdleHand has its own concurrent timeline.
     if(age==28){hand={};hand.pivotX=hand.pivotY=.5f;hand.x=-70+random(-90,80);hand.y=80+random(0,20);hand.rotation=-15;recoveryX=-48+random(-20,0);recoveryY=-3+random(-5,5);rotation=random(4,10);misalignment=random(1.06f,1.31f);handMotion.set(hand,false);}
     else if(age<34&&age>28){hand.x=recoveryX+(hand.x-recoveryX)*.6f;hand.y=recoveryY+(hand.y-recoveryY)*.6f;hand.rotation=rotation+(hand.rotation-rotation)*.7f;hand.scaleX=hand.scaleY=misalignment+(hand.scaleX-misalignment)*.6f;}
@@ -425,7 +470,11 @@ void Weapons::auxiliary(){
     oldAlt=altHeld;oldReload=reloadHeld;
     if(auxReady&&age<0&&auxAction==0){
         if(weapon==0){if(reloadPress)secondFist=!secondFist;if(altPress){auxAction=3;auxAge=-1;fistEnd=-1;bumpMotion.reset();}}
-        if(weapon==1){if(reloadPress){secondGrip=!secondGrip;gripAge=0;soundEvents.push_back("WeapGlove2");}if(altPress){auxAction=2;auxAge=-1;}}
+        if(weapon==1){if(reloadPress&&gripAge<0){secondGrip=!secondGrip;gripAge=0;
+            gripHand={};gripHand.pivotX=gripHand.pivotY=1;
+            gripHand.x=secondGrip?-120:0;gripHand.y=secondGrip?70:10;
+            gripHand.rotation=secondGrip?-50:-30;gripHand.scaleX=gripHand.scaleY=secondGrip?.85f:.95f;
+            gripMotion.set(gripHand,false);soundEvents.push_back("WeapGlove2");}if(altPress){auxAction=2;auxAge=-1;}}
         if(weapon==2&&(altPress||reloadPress)){manualReload=true;shotgunReturnWait=0;age=9;pose={};shotgun();}
         if(weapon==8&&(altPress||reloadPress)){manualReload=true;ssgCatchAge=-1;age=10;pose={};superShotgun();}
         if(weapon>=3&&weapon<=6&&reloadPress){auxAction=1;auxAge=-1;}
@@ -439,7 +488,25 @@ void Weapons::auxiliary(){
         if(weapon==5){if(altPress)muzzle=std::min(2.f,muzzle+1);else if(altHeld)muzzle=std::min(1.f,muzzle+.2f);else muzzle*=.5f;}
         if(weapon==6&&bfgIdle)muzzle=random(-.2f,.2f);
     }
-    if(gripAge>=0&&++gripAge>12)gripAge=-1;
+    if(gripAge>=0){
+        gripMotion.beforeTick();
+        if(gripAge>0){
+            if(secondGrip){
+                gripHand.x=35+pose.x+(gripHand.x-35-pose.x)*.7f;
+                gripHand.y=pose.y+(gripHand.y-pose.y)*.7f;
+                gripHand.rotation=pose.rotation-30+(gripHand.rotation+30-pose.rotation)*.6f;
+                gripHand.scaleX=pose.scaleX-.05f+(gripHand.scaleX-pose.scaleX+.05f)*.6f;
+                gripHand.scaleY=pose.scaleY-.05f+(gripHand.scaleY-pose.scaleY+.05f)*.6f;
+            }else{
+                if(gripAge==1){gripHand.x-=2;gripHand.y-=2;gripHand.rotation+=1;}
+                else if(gripAge==2){gripHand.x-=3;gripHand.y+=5;}
+                else {gripHand.x-=gripHand.y*.15f;gripHand.y*=1.25f;}
+                gripHand.scaleX-=.025f;gripHand.scaleY-=.025f;
+            }
+        }
+        gripMotion.set(gripHand);
+        if(++gripAge>=(secondGrip?13:10))gripAge=-1;
+    }
     if(auxAction==0)return;
     ++auxAge;
     auto approach=[](float value,float target,float retention){return target+(value-target)*retention;};
@@ -574,11 +641,20 @@ void Weapons::auxiliary(){
 }
 std::vector<Layer> Weapons::layers(float f,bool bareHands)const{
     auto result=baseLayers(f,bareHands);
+    if(weapon==2&&thirdIdleAge>=0){
+        if(!result.empty())result[0].sprite="SH1GZ0";
+        // LHand is a negative overlay in the original: behind the shotgun.
+        // It follows view movement, but does not inherit the gun's idle gesture.
+        auto arm=idleHandMotion.sample(f);
+        if(movementActive){auto m=movementMotion.sample(f);arm.x+=m.x;arm.y+=m.y;arm.rotation+=m.rotation;arm.scaleX*=m.scaleX;arm.scaleY*=m.scaleY;}
+        result[0].transform.pivotX=.5f;result[0].transform.pivotY=1;
+        result.insert(result.begin(),{"MRD1H0",arm,false,1,false,false,false,false});
+    }
     auto t=motion.sample(f);
     if(weapon==0&&secondFist&&auxAction!=3&&age<0){auto other=t;result.push_back({std::string(bareHands?"PUN3":"PUN1")+"C0",other,false});}
-    if(weapon==1&&secondGrip&&auxAction!=2){
-        auto grip=t;if(gripAge>=0){float blend=gripAge/12.f;grip.x-=80*(1-blend);grip.y+=70*(1-blend);}
-        result.insert(result.begin(),{"P2SGB0",grip,false});result.push_back({"P2SGA0",grip,false});
+    if(weapon==1&&auxAction!=2){
+        if(gripAge>=0)result.insert(result.begin(),{secondGrip?"MRD1G0":"MRD1H0",gripMotion.sample(f),false});
+        else if(secondGrip){result.insert(result.begin(),{"P2SGB0",t,false});result.push_back({"P2SGA0",t,false});}
     }
     if(weapon==6&&bfgIdle&&age<0)result.push_back({"BFGOA0",t,true,.35f,true});
     if(auxAction==1&&auxAge<(weapon==3?89:88)){
@@ -596,6 +672,13 @@ std::vector<Layer> Weapons::layers(float f,bool bareHands)const{
         result.push_back({prefix+(auxAge==0&&secondFist?"C0":"H0"),auxHandMotion.sample(f),false});
     }
     if(auxAction==4&&auxAge>=6&&auxAge<19){auto pull=auxHandMotion.sample(f);auto rope=pull;rope.x+=10;rope.y+=20;rope.scaleX=rope.scaleY=1;rope.pivotX=1;rope.pivotY=0;result.push_back({"SAW1Z0",rope,false});result.push_back({"SAW1Y0",pull,false});}
+    if(weapon==7&&sawBlood){
+        char shape=frame>='C'&&frame<='F'?frame:'B';
+        for(const auto &stain:sawStains){
+            Layer layer{std::string("SA")+shape+char('0'+stain.group)+char('A'+stain.frame)+"0",t,false,std::min(1.f,stain.life/35.f)};
+            layer.bloodTint=stain.tint;result.push_back(layer);
+        }
+    }
     if(movementActive){auto movement=movementMotion.sample(f),idle=idleMotion.sample(f);for(auto&layer:result)if(layer.addWeapon){layer.transform.x+=movement.x+idle.x;layer.transform.y+=movement.y+idle.y;layer.transform.rotation+=movement.rotation+idle.rotation;layer.transform.scaleX*=movement.scaleX;layer.transform.scaleY*=movement.scaleY;}}
     for(const auto&shell:shells)result.push_back({shell.kind==1||shell.kind==2?"PISCA0":"SHTCA0",shell.motion.sample(f),false,1,false,false,false,false});
     if(shotgunCatchAge>=0){
@@ -604,6 +687,121 @@ std::vector<Layer> Weapons::layers(float f,bool bareHands)const{
         result.push_back({shotgunCatchAge<=6?"MRD1I0":"MRD1J0",catching,false});
     }
     return result;
+}
+// Original NSHS smoke artwork, independent of gameplay and animation RNG.
+float Weapons::effectRandom(float a,float b){smokeRandom=smokeRandom*1664525u+1013904223u;return a+(b-a)*(smokeRandom>>8)/16777215.f;}
+void Weapons::barrelSmokeDuration(float multiplier){
+    // MRIntW_FlowingSmokeMaxTime scales heat gained and its cap, not the
+    // lifetime/velocity of each particle. Keep the thin rising plume intact.
+    smokeDuration=std::isfinite(multiplier)?std::clamp(multiplier,1.f,5.f):1.f;
+}
+void Weapons::effects(bool firing,bool reload,bool hot,bool saw,bool bloody,bool idle){
+    if(!firing)fireSmoke.clear();
+    firingSmoke=firing;reloadSmoke=reload;hotSmoke=hot;sawSmoke=saw;sawBlood=bloody;idleGestures=idle;
+    if(!bloody){blood=0;sawStains.clear();}
+    smoke.erase(std::remove_if(smoke.begin(),smoke.end(),[&](const Smoke&p){return p.kind==0?!firing:p.kind==1?!reload:p.kind==2?!hot:!saw;}),smoke.end());
+}
+void Weapons::emitFireSmoke(){
+    if(!firingSmoke||age<0||manualReload)return;
+    bool active=weapon==1?age<=5:weapon==2?age<=4:weapon==3?age<=3:weapon==4?age>=1&&age<=5:weapon==8?age<=5:false;
+    if(active&&fireSmoke.size()<32)fireSmoke.push_back({weapon,(pose.x+movementPose.x)*.032f,(pose.y+movementPose.y)*.032f,power,spin,weapon==1?(age==2?.2f:age>=3?.4f:0):0});
+}
+void Weapons::emitSmoke(float x,float y,float scale,float alpha,int kind){
+    if(smoke.size()>=64)return;
+    Smoke p{};p.pose.x=x-32;p.pose.y=y-32;p.pose.pivotX=p.pose.pivotY=.5f;
+    p.pose.scaleX=p.pose.scaleY=scale;p.alpha=alpha;p.kind=kind;
+    if(kind==1){
+        p.vx=weapon==8?effectRandom(-1.4f,.5f):effectRandom(0,2);
+        p.vy=weapon==8?-effectRandom(.3f,.5f):-effectRandom(.9f,1);
+        p.vz=weapon==8?effectRandom(-.5f,.5f):effectRandom(.5f,1);
+        p.growth=-p.vy*.1f;
+    }else{
+        float a=pose.rotation*.01745329252f;
+        p.vx=sawHold?effectRandom(5,6)*std::cos(a):effectRandom(2.5f,3);
+        p.vy=-effectRandom(1,1.2f)+(sawHold?std::sin(a):0);
+        p.vz=sawHold?-effectRandom(.6f,1):effectRandom(.2f,.6f);
+        p.growth=(effectRandom(.09f,.13f)-p.vy)*.1f;p.fade=.015f;
+    }
+    p.motion.set(p.pose,false);smoke.push_back(p);
+}
+void Weapons::sawHit(int tint){
+    if(!sawBlood||weapon!=7)return;
+    blood=1;
+    // Original mask families: 6 large stains, 18 specks, 6 edge stains,
+    // and 10 fine splatters. Each stain keeps the blood colour it was hit with.
+    static constexpr int counts[]={0,6,18,6,10};
+    int group=sawStains.empty()?1:1+int(effectRandom(0,3.999f));
+    int frame=int(effectRandom(0,float(counts[group])-.001f));
+    for(auto &stain:sawStains)if(stain.group==group&&stain.frame==frame&&stain.tint==tint){stain.life=350;return;}
+    if(sawStains.size()>=40)sawStains.erase(sawStains.begin());
+    sawStains.push_back({group,frame,std::clamp(tint,0,2),350});
+}
+void Weapons::tickSmoke(){
+    emitFireSmoke();
+    for(auto &stain:sawStains)stain.life-=1;
+    sawStains.erase(std::remove_if(sawStains.begin(),sawStains.end(),[](const SawStain&s){return s.life<=0;}),sawStains.end());
+    for(auto &e:heatEvents)if(--e.tics==0){float &h=e.weapon==weapon?heat:storedHeat[e.weapon];h=std::min(e.weapon==2?1.f+(.05f*35.f*1.5f)*smokeDuration:525.f*smokeDuration,h+e.amount);}
+    heatEvents.erase(std::remove_if(heatEvents.begin(),heatEvents.end(),[](const HeatEvent &e){return e.tics<=0;}),heatEvents.end());
+    rocketHeat=std::max(0.f,rocketHeat-1);
+    ++smokeClock;static const float cooling[9]={0,.05f,.025f,.085f,.1f,0,0,0,.015f};
+    for(int w=0;w<9;++w)if(w!=weapon)storedHeat[w]=std::max(0.f,storedHeat[w]-cooling[w]);
+    if(heat>=1)heat-=cooling[weapon]*2;blood=std::max(0.f,blood-.0015f);
+    for(auto&p:smoke){p.motion.beforeTick();if(p.life++>0){p.alpha-=p.fade;p.pose.x+=p.vx;p.pose.y-=p.vz*std::cos(viewPitch)-p.vy*std::sin(viewPitch);p.pose.scaleX+=p.growth;p.pose.scaleY+=p.growth;}p.motion.set(p.pose);}
+    smoke.erase(std::remove_if(smoke.begin(),smoke.end(),[](const Smoke&p){return p.alpha<=0;}),smoke.end());
+    if(reloadSmoke&&((weapon==2&&age==18)||(weapon==8&&age==27))){
+        if(weapon==2)emitSmoke(130+pose.x+movementPose.x,170,effectRandom(.3f,.4f),.1f+power*.2f,1);
+        else for(int barrel=0;barrel<2;++barrel)for(int i=0;i<3;++i)emitSmoke(95+barrel*20+movementPose.x,137+movementPose.y,effectRandom(.3f,.4f),.1f+power*.2f,1);
+    }
+    if(sawSmoke&&weapon==7){
+        float a=pose.rotation*.01745329252f;
+        emitSmoke(sawHold?200+pose.x-20*std::cos(a):190+movementPose.x,sawHold?170+pose.y-20*std::sin(a):180,effectRandom(sawHold?.3f:.5f,sawHold?.4f:.6f),effectRandom(.01f,.08f)*(sawHold?3:4),3);
+    }
+}
+std::vector<Layer> Weapons::smokeLayers(float f)const{
+    std::vector<Layer> result;
+    for(const auto&p:smoke)result.push_back({"NSHSA0",p.motion.sample(f),false,std::max(0.f,p.alpha-p.fade*std::clamp(f,0.f,1.f)),false,false,false,false});
+    return result;
+}
+// Source: MuzzleSmoke.zsc and Additionally/SSGStuff.zsc. Offsets remain
+// in source overlay coordinates; the renderer performs the world projection.
+std::vector<BarrelEmitter> Weapons::barrelEmitters()const{
+    std::vector<BarrelEmitter> out;
+    if(!hotSmoke||heat<1)return out;
+    float x=pose.x+movementPose.x+idlePose.x,y=32+pose.y+movementPose.y+idlePose.y;
+    auto add=[&](int id,float ox,float oy,float scale,float fade,float speed=1){out.push_back({id,(x+ox)*.032f,(y+oy)*.032f,scale,.2f*fade,speed,weapon==4?rocketHeat:0});};
+    if(weapon==1){
+        float oy=frame=='C'?0:frame=='D'||frame=='F'?-10:frame=='E'?-20:5;
+        float scale=frame=='C'?1.1f:frame=='D'||frame=='F'?1.25f:frame=='E'?1.5f:1;
+        float angle=-pose.rotation*.01745329252f,px=x,py=y+oy;
+        x=px*std::cos(angle)+py*std::sin(angle);y=-px*std::sin(angle)+py*std::cos(angle);
+        add(0,0,0,scale,std::min(1.f,heat/40));
+    }else if(weapon==2){
+        float ox=frame=='C'?-8:frame=='D'?-14:frame=='E'||frame=='F'?-16:frame=='G'?-17:frame=='H'?-40:0;
+        float oy=frame=='C'?-7:frame=='D'?-10:frame=='E'||frame=='F'?-15:frame=='G'?-17:frame=='H'?-20:15;
+        float scale=frame=='C'?1.5f:frame=='D'?1.75f:frame=='E'||frame=='F'||frame=='G'?2:frame=='H'?2.25f:1;
+        add(0,ox,oy,scale,std::min(1.f,heat/40));
+    }else if(weapon==3){
+        // Lower the rotating fume origins slightly to meet the visible barrels.
+        for(size_t i=0;i<hotBarrels.size();++i){float angle=(spin-hotBarrels[i]*60)*.01745329252f;
+            add(int(i),std::cos(angle)*30,std::sin(angle)*20+48,1,heat<12?heat/40:1,1/std::max(1.f,std::abs(spinSpeed)));}
+    }else if(weapon==4){add(0,0,40,5+std::hypot(pose.scaleX,pose.scaleY)-1,std::min(1.f,heat/30));}
+    else if(weapon==8){
+        // Explicit reload emitter offsets used by the source state sequence.
+        float ax=-7,ay=18,bx=6,by=18,sa=1,sb=1;
+        if(frame=='B'){ax=-17;ay=8;bx=-3;by=3;sa=1.25f;sb=1.27f;}
+        else if(frame=='C'){ax=-20;ay=0;bx=-12;by=-5;sa=1.3f;sb=1.33f;}
+        else if(frame=='D'){
+            float rot=pose.rotation;ax=-30+rot;ay=-rot;bx=(age>=17?-20:-15)+rot;by=-5-rot;sa=1.45f;sb=1.5f;
+            if(age<15){ax=-30;ay=0;bx=-15;by=-5;sa=1.42f;sb=1.45f;}
+            if(age>=19){float sc=std::max(.1f,pose.scaleX);rot*=2;ax=-25*sc-rot*2;bx=-15*sc-rot*2;ay=5/sc-rot;by=1/sc-rot;sa=sb=sc+.3f;if(age==21){ax+=20;bx+=20;ay-=10;by-=10;}if(age==22){ax-=20;bx-=20;}}
+        }
+        else if(frame=='J'){float tx=age<=23?170:age==24?120:80,ty=age<=23?95:age==24?145:135;ax=tx-pose.x;bx=tx+(age==25?0:2)-pose.x;ay=by=ty-pose.y;sa=sb=.7f;}
+        else if(age>=26&&age<=41){ax=60;bx=62;ay=by=age==26?145:age==27?135:age==28?125:age<36?115:105;sa=sb=age<=36?.7f:age==37?.65f:age==38?.62f:age<=40?.6f:.56f;}
+        else if(age>=42&&age<=49){ax=45;bx=55;ay=by=age==42?40:age<=45?30:20;sa=sb=age==42?.7f:age<=44?.8f:age<=46?1:1.1f;}
+        else if(age>=50&&age<=51){ax=-17;ay=8;bx=-3;by=3;sa=sb=age==50?1.05f:1.02f;}
+        add(0,ax,ay,sa,heat<20?heat/40:1);add(1,bx,by,sb,heat<20?heat/40:1);
+    }
+    return out;
 }
 std::vector<std::string> Weapons::takeSounds(){auto result=std::move(soundEvents);soundEvents.clear();return result;}
 }

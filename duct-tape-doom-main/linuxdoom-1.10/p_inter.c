@@ -1,3 +1,6 @@
+#include "i_lan.h"
+#include "m_arcade.h"
+#include "p_arena.h"
 #include "m_arcade.h"
 // Emacs style mode select   -*- C++ -*- 
 //-----------------------------------------------------------------------------
@@ -42,6 +45,7 @@ rcsid[] = "$Id: p_inter.c,v 1.4 1997/02/03 22:45:11 b1 Exp $";
 #include "am_map.h"
 
 #include "p_local.h"
+#include "r_state.h"
 
 #include "s_sound.h"
 
@@ -67,6 +71,14 @@ extern unsigned r_levelserial;
 // a weapon is found with two clip loads,
 // a big item has five clip loads
 int	maxammo[NUMAMMO] = {200, 50, 300, 50};
+extern int p_boostchaingun;
+int P_BoostChaingunEnabled(void){return p_boostchaingun&&!netgame&&!demoplayback&&!demorecording&&!arcade_active;}
+void P_UpdateChaingunAmmo(player_t *player){
+    int cap=maxammo[am_clip]*(player->backpack?(P_BoostChaingunEnabled()?3:2):1);
+    player->maxammo[am_clip]=cap;
+    if(player->ammo[am_clip]>cap)player->ammo[am_clip]=cap;
+}
+
 int	clipammo[NUMAMMO] = {10, 4, 20, 1};
 
 
@@ -296,6 +308,7 @@ P_GiveCard
     
     player->bonuscount = BONUSADD;
     player->cards[card] = 1;
+    P_ArenaKey(player);
     { int index;
       for(index=0;index<MAXPLAYERS;++index) if(player==&players[index]) {
         p_keypickup_card[index] = card;
@@ -617,6 +630,7 @@ P_TouchSpecialThing
 		player->maxammo[i] *= 2;
 	    player->backpack = true;
 	}
+	P_UpdateChaingunAmmo(player);
 	for (i=0 ; i<NUMAMMO ; i++)
 	    P_GiveAmmo (player, i, 1);
 	player->message = DEH_String (GOTBACKPACK);
@@ -753,9 +767,11 @@ P_KillMobj
 	
     }
 
+    P_PhotoEvent(4,target);
     if (target->health < -target->info->spawnhealth 
 	&& target->info->xdeathstate)
     {
+	P_PhotoEvent(16,target);
 	P_SetMobjState (target, target->info->xdeathstate);
         if(!target->player && (target->info->flags&MF_COUNTKILL) && doom_toasty_gib(&toasty_state,r_levelserial)) {
             p_toasty_tic=leveltime;
@@ -825,6 +841,8 @@ P_DamageMobj
     fixed_t	thrust;
     int		temp;
 	
+    if(lan_session&&!deathmatch&&!lan_friendlyfire&&source&&source!=target&&source->player&&target->player)return;
+
     if ( !(target->flags & MF_SHOOTABLE) )
 	return;	// shouldn't happen...
 		
@@ -936,6 +954,7 @@ P_DamageMobj
     P_AggressiveDamage(target,inflictor,source,damage);
     if(damage>0)Arcade_Impact(inflictor,source,target);
     Arcade_Damage(source,target,damage);
+    if(damage>0)P_PhotoEvent(2,target);
     target->health -= damage;	
     if (target->health <= 0)
     {

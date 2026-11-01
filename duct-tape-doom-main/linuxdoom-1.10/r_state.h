@@ -109,9 +109,11 @@ extern void (*R_BeforeTic)(void);
 // Renderer-only shot notification; projectile is a mobj type or -1 for gunfire.
 extern void (*R_MuzzleFlash)(mobj_t *source, int weapon, int projectile);
 extern void (*R_WeaponAttack)(player_t *player);
+extern void (*R_SawHit)(player_t *player,mobj_t *victim);
 extern void (*R_WeaponAux)(int alt, int reload);
 // Renderer-only hitscan wall impact: side faces the shooter; x,y,z is the puff.
 extern void (*R_RocketImpact)(mobj_t *rocket);
+extern int (*R_DoorRocketImpact)(mobj_t *rocket);
 extern void (*R_DoorMotion)(sector_t *sector);
 extern void (*R_CraterCrumble)(float x,float y,float z);
 extern void (*R_SurfaceChip)(float x,float y,float z,float nx,float ny,float nz);
@@ -172,3 +174,12 @@ extern void (*R_BFGHit)(mobj_t *ball,mobj_t *victim);
 //-----------------------------------------------------------------------------
 
 extern int (*R_WheelSlowMotion)(void);
+
+extern int r_photosteps;
+extern int r_photoactive,r_photohelp,r_photodof,r_photostyle;
+extern float r_photofocus;
+
+/* Optional photo-event capture, disabled until armed in photo mode. */
+extern int r_photoauto,r_photomask,r_photoscope,r_photoevent,r_photocooldown;
+extern mobj_t *r_photoeventsubject;
+void P_PhotoEvent(int event,mobj_t *subject);

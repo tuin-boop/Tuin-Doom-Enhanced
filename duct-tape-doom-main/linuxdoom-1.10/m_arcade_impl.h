@@ -202,23 +202,36 @@ static void arcade_font(int x,int y,const char *text,int scale){
 /* Tilted main-menu signature, sharing the smooth true-colour rank pass. */
 int Menu_BrandOpen(void){return menuactive && currentMenu==&MainDef && !messageToPrint && !arcade_screen;}
 static void menu_brand(void){
-    /* Keep the glyphs upright and pixel-aligned; tilt their baseline only.
-       Rotating a six-pixel font destroys its narrow stems and counters. */
+    /* Use the loaded Doom font patches, including their bevel shading. */
     const char *text="TUINDOOMENHANCED";
-    int width=arcade_width(text)*2;
-    int left=SCREENWIDTH-width-9;
+    byte ink[256*32]={0};int width=0,height=0;
+    const byte *pal=W_CacheLumpName("PLAYPAL",PU_CACHE);
     arcade_init_colors();
-    for(int pass=0;pass<2;++pass){int cursor=0;
-        for(const char *t=text;*t;++t){unsigned c=(unsigned char)*t;int w=baby_widths[c-32];
-            int top=47-cursor/8;
-            for(int y=0;y<6;++y)for(int x=0;x<w;++x){
-                int value=baby_pixels[baby_offsets[c-32]+y*w+x];if(!value)continue;
-                arcade_rank_tint=pass?(4u<<24)|2:0;
-                if(!pass)arcade_box(left+cursor+x*2-1,top+y*2-1,4,4,0);
-                else arcade_box(left+cursor+x*2,top+y*2,2,2,arcade_colors[(cursor/16)%7]);
+    for(const char *t=text;*t;++t){
+        patch_t *glyph=hu_font[*t-HU_FONTSTART];
+        int w=SHORT(glyph->width),h=SHORT(glyph->height);
+        if(width+w>=256)break;if(h>height)height=h;
+        for(int x=0;x<w;++x){
+            column_t *col=(column_t*)((byte*)glyph+LONG(glyph->columnofs[x]));
+            while(col->topdelta!=255){byte *src=(byte*)col+3;
+                for(int y=0;y<col->length;++y){int row=col->topdelta+y;if(row>=32)break;
+                    int index=src[y]*3;
+                    int light=pal[index];if(pal[index+1]>light)light=pal[index+1];if(pal[index+2]>light)light=pal[index+2];
+                    ink[row*256+width+x]=(byte)(80+light*175/255);
+                }
+                col=(column_t*)((byte*)col+col->length+4);
             }
-            cursor+=w*2;
         }
+        width+=w+1;
+    }
+    int left=SCREENWIDTH-width-9;
+    for(int pass=0;pass<2;++pass)for(int x=0;x<width;++x)for(int y=0;y<height;++y){
+        int u=x,v=y;if(v>=32)continue;
+        int value=ink[v*256+u];if(!value)continue;
+        int top=47-x/10;
+        arcade_rank_tint=pass?(4u<<24)|value:0;
+        if(!pass)arcade_box(left+x-1,top+y-1,3,3,0);
+        else arcade_box(left+x,top+y,1,1,arcade_shades[(x/16)%7][(255-value)/24]);
     }
     arcade_rank_tint=0;
 }

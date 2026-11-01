@@ -5,7 +5,7 @@ namespace doom3d {
 static bool wheelActive=false;
 static int wheelSelected=0,wheelLevel=0;
 static float wheelX=0,wheelY=0;
-static bool wheelAllowed(){return worldPending&&gamestate==GS_LEVEL&&!menuactive&&!paused&&!demoplayback&&!demorecording&&!netgame&&players[consoleplayer].health>0;}
+static bool wheelAllowed(){return worldPending&&gamestate==GS_LEVEL&&!menuactive&&!paused&&!demoplayback&&!demorecording&&(!netgame||lan_session)&&players[consoleplayer].health>0;}
 static bool wheelOwned(int slot){return slot>=0&&slot<NUMWEAPONS&&players[consoleplayer].weaponowned[slot]&&!(gamemode==shareware&&(slot==wp_plasma||slot==wp_bfg));}
 static void wheelDraw(std::vector<unsigned>& out){
     if(!wheelActive)return;

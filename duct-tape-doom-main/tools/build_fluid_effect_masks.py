@@ -1,5 +1,5 @@
-"""Compile the preserved FluidWeapons/base-engine grayscale masks.
-Their luminance is coverage (black is transparent), not a solid PNG alpha.
+"""Compile effect coverage. Legacy additive masks use luminance; normal
+blended NSHSA0 smoke keeps PNG alpha and applies its grey RGB as tint.
 """
 from pathlib import Path
 from PIL import Image
@@ -28,5 +28,20 @@ alpha = [p[3] for p in im.getdata()]
 parts.append('static const unsigned char fluid_glpart[]={'+','.join(map(str,alpha))+'};\n')
 parts.append(f'static const FluidMask mask_glpart={{{im.width},{im.height},fluid_glpart}};\n')
 names.append('glpart')
+im = Image.open(root/'assets/fluid-effects/NSHSA0.png').convert('RGBA')
+assert all(p[3] == 0 or p[:3] == (117,117,117) for p in im.getdata()), 'NSHSA0 tint changed'
+alpha = [p[3] for p in im.getdata()]
+parts.append('static constexpr float fluidSmokeTint=117.f/255.f;\n')
+parts.append('static const unsigned char fluid_NSHSA0[]={'+','.join(map(str,alpha))+'};\n')
+parts.append(f'static const FluidMask mask_NSHSA0={{{im.width},{im.height},fluid_NSHSA0}};\n')
+names.append('NSHSA0')
+im = Image.open(root/'assets/fluid-effects/NSHSH0.png').convert('RGBA')
+alpha = [p[3]*max(p[:3])//255 for p in im.getdata()]
+parts.append('static const unsigned char fluid_NSHSH0[]={'+','.join(map(str,alpha))+'};\n')
+parts.append(f'static const FluidMask mask_NSHSH0={{{im.width},{im.height},fluid_NSHSH0}};\n')
+names.append('NSHSH0')
+# Default (style 0) engine particles are square. Reuse their coverage, but
+# give smoke a separate index so it does not enter the rocket stipple shader.
+names.append('rocketSquare')
 parts.append('static const FluidMask fluidMasks[]={'+','.join('mask_'+n for n in names)+'};\n')
 (root/'platform/scene3d/fluid_effect_assets.inc').write_text(''.join(parts))

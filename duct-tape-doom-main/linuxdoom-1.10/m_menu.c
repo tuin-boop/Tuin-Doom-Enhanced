@@ -197,6 +197,7 @@ void M_EndGame(int choice);
 void M_ReadThis(int choice);
 void M_ReadThis2(int choice);
 void M_QuitDOOM(int choice);
+static void M_Multiplayer(int choice);
 
 void M_ChangeMessages(int choice);
 void M_ChangeSensitivity(int choice);
@@ -1430,6 +1431,7 @@ M_WriteText
 
  #include "m_arcade_impl.h"
 #include "m_director_impl.h"
+#include "m_lan_impl.h"
 
 //
 // M_Responder
@@ -1445,6 +1447,7 @@ boolean M_Responder (event_t* ev)
     static  int     mousex = 0;
     static  int     lastx = 0;
 	
+    if(lan_input(ev))return true;
     if(director_input(ev))return true;
     if(arcade_screen){if(ev->type==ev_keydown)arcade_key(ev->data1);return true;}
     ch = -1;
@@ -1961,6 +1964,43 @@ void M_Drawer (void)
     char		string[256];
 
     inhelpscreens = false;
+    if(r_photoactive){
+        extern const char *I_PhotoNotice(void);
+        extern int I_PhotoSavedOK(void);
+        if(v_overlayactive)memset(v_overlaymask,0,SCREENWIDTH*SCREENHEIGHT);
+        memset(arcade_rank_pixels,0,sizeof(arcade_rank_pixels));
+        if(r_photohelp){
+            arcade_ink=0;arcade_font(8,8,"PHOTO MODE / F8 OR ESC: EXIT",1);
+            arcade_font(8,18,"MOUSE: ORBIT  WHEEL: ZOOM",1);
+            arcade_font(8,28,"TAB: NEXT SUBJECT  P: PLAYER",1);
+            arcade_font(8,38,"D: DEPTH OF FIELD  C: COLOUR",1);
+            arcade_font(8,48,"H: HIDE HELP  F7: SCREENSHOT",1);
+            if(netgame)arcade_font(8,68,"LIVE PHOTO / GAME KEEPS RUNNING",1);
+            else {arcade_font(8,68,"[ OR ]: ADVANCE ONE TICK",1);
+            char triggers[100];
+            snprintf(triggers,sizeof(triggers),"T: AUTO PHOTO %s / 6: %s",r_photoauto?"ARMED":"OFF",r_photoscope==0?"BOTH":r_photoscope==1?"PLAYER":"MONSTERS");arcade_font(8,80,triggers,1);
+            const char *events[]={"SHOOTING","TAKING DAMAGE","DYING","BARREL EXPLOSION","GIBBING"};
+            for(int n=0;n<5;++n){snprintf(triggers,sizeof(triggers),"%d: %s [%s]",n+1,events[n],r_photomask&(1<<n)?"ON":"OFF");arcade_font(8,90+n*10,triggers,1);}
+            if(r_photoevent){snprintf(triggers,sizeof(triggers),"CAPTURED: %s",events[r_photoevent==16?4:r_photoevent==8?3:r_photoevent==4?2:r_photoevent==2?1:0]);arcade_font(8,145,triggers,1);}
+            }
+            const char *depths[]={"OFF","LOW","MEDIUM","HIGH"};
+            const char *styles[]={"ORIGINAL","MONO","WARM","COOL","VIVID"};
+            char info[64];snprintf(info,sizeof(info),"DOF: %s / %s",depths[r_photodof],styles[r_photostyle]);arcade_font(8,58,info,1);
+        }
+        const char *notice=I_PhotoNotice();
+        if(notice){
+            arcade_ink=0;
+            arcade_font(8,100,I_PhotoSavedOK()?"SCREENSHOT SAVED TO:":"SCREENSHOT FAILED:",1);
+            int row=0;
+            while(*notice&&row<8){
+                char line[61];size_t n=strlen(notice);if(n>60)n=60;
+                memcpy(line,notice,n);line[n]=0;
+                arcade_font(8,112+row*10,line,1);notice+=n;++row;
+            }
+        }
+        return;
+    }
+    lan_draw();if(lan_menu)return;
     arcade_draw();if(arcade_screen)return;director_draw();if(director_menu)return;
 
     

@@ -1,3 +1,4 @@
+extern int r_photoactive;
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -100,6 +101,7 @@ void I_InitGraphics(void)
     SDL_SetWindowMinimumSize(window, 320, 240);
 #ifdef DOOM_RENDER3D
     accel = I_Render3DInit(window);
+    {extern int lan_styled;lan_styled=accel;}
 #endif
     if (
 #ifdef DOOM_RENDER3D
@@ -159,6 +161,16 @@ void I_StartTic(void)
         /* Keyboard, mouse and focus events must not overwrite D_PostEvent
          * fixtures or move/fire while the user works in another window. */
         continue;
+#endif
+#ifdef DOOM_RENDER3D
+        if(accel&&(r_photoactive||(event.type==SDL_EVENT_KEY_DOWN&&event.key.scancode==SDL_SCANCODE_F8))){
+            int was=r_photoactive;
+            if(event.type==SDL_EVENT_KEY_DOWN&&!event.key.repeat)I_PhotoKey(event.key.scancode);
+            else if(event.type==SDL_EVENT_MOUSE_MOTION)I_PhotoMove(event.motion.xrel,event.motion.yrel);
+            else if(event.type==SDL_EVENT_MOUSE_WHEEL)I_PhotoZoom(event.wheel.y);
+            if(was!=r_photoactive){for(int i=0;i<SDL_SCANCODE_COUNT;++i)if(keys[i]){post(ev_keyup,keys[i],0,0);keys[i]=0;}buttons=0;post(ev_mouse,0,0,0);dx=0;}
+            if(event.type!=SDL_EVENT_WINDOW_FOCUS_LOST)continue;
+        }
 #endif
         if (event.type == SDL_EVENT_KEY_DOWN || event.type == SDL_EVENT_KEY_UP)
         {

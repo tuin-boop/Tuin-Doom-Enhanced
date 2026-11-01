@@ -66,6 +66,7 @@ set(DOOM_SOURCES
     linuxdoom-1.10/m_misc.c
     linuxdoom-1.10/m_random.c
     linuxdoom-1.10/p_ceilng.c
+    linuxdoom-1.10/p_arena.c
     linuxdoom-1.10/p_doors.c
     linuxdoom-1.10/p_enemy.c
     linuxdoom-1.10/p_floor.c
@@ -340,6 +341,9 @@ if(DOOM_BUILD_SDL)
         platform/i_sdl_sound.c platform/i_music.c platform/audio/mixer_music.c platform/i_singleplayer.c ${DOOM_AUDIO_SOURCES}
         platform/i_portable_system.c platform/wad_probe.c)
     target_link_libraries(doom PRIVATE doom_game SDL3::SDL3 doom_music doom_mod_archive)
+    if(WIN32)
+        target_link_libraries(doom PRIVATE ws2_32)
+    endif()
     target_compile_definitions(doom PRIVATE DOOM_NATIVE)
     set_target_properties(doom PROPERTIES WIN32_EXECUTABLE TRUE)
     doom_add_renderer(doom ${DOOM_RENDER3D})
@@ -396,6 +400,9 @@ if(DOOM_BUILD_SDL)
                 platform/i_portable_system.c)
             target_compile_definitions(${target} PRIVATE DOOM_TEST_DRIVER)
             target_link_libraries(${target} PRIVATE ${game} SDL3::SDL3 doom_music doom_mod_archive)
+            if(WIN32)
+                target_link_libraries(${target} PRIVATE ws2_32)
+            endif()
             doom_add_renderer(${target} ${renderer})
             if(APPLE)
                 target_sources(${target} PRIVATE platform/i_mac_music.c)
@@ -405,6 +412,7 @@ if(DOOM_BUILD_SDL)
         # Plays every map of a WAD and reports slow views and their causes:
         # doom-perf-smoke <iwad> [-maps MAP01,MAP02] [-spacing units] [-budget ms]
         if(DOOM_RENDER3D)
+            doom_add_smoke(doom-lan-smoke doom_game ON tests/lan_smoke.c)
             doom_add_smoke(doom-perf-smoke doom_game ON tests/perf_smoke.c)
             doom_add_smoke(doom-glass-smoke doom_game ON tests/glass_smoke.cpp)
             add_executable(doom-glass-fracture-tests tests/glass_fracture.cpp)

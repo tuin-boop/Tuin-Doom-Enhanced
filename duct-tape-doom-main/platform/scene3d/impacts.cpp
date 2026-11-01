@@ -4,6 +4,7 @@
 #include "p_digwall.h"
 extern "C" {
 #include "p_solid.h"
+#include "p_arena.h"
 }
 #include "../../../map_world.h"
 extern const lab::MapWorld *SV_MapWorld();
@@ -18,11 +19,17 @@ static std::vector<WallDecal> wallDecals;
 std::vector<FlatDecal> flatDecals;
 std::vector<Debris> debris;
 static std::vector<Scorch> scorches;
+struct DoorPanel {float x,y,z,tx,ty,nx,ny,w,h,u,v,vx,vy,vz,born,spin;int texture,sector;float delay;};
+static std::vector<DoorPanel> doorPanels;
+struct DoorShield {int line,side,kind;float along,z,born;};
+static std::vector<DoorShield> doorShields;
+static std::set<std::pair<int,int>> detachedDoorEdges;
+static int doorSupportTic=-1;
 static unsigned decalLevelSerial;
 std::minstd_rand impactRandom(1993);
 // Impacts from a previous level go once the engine has moved on.
 void dropOldLevelImpacts() {
-    if(decalLevelSerial!=r_levelserial){wallDecals.clear();flatDecals.clear();debris.clear();scorches.clear();decalLevelSerial=r_levelserial;}
+    if(decalLevelSerial!=r_levelserial){wallDecals.clear();flatDecals.clear();debris.clear();scorches.clear();doorPanels.clear();doorShields.clear();detachedDoorEdges.clear();doorSupportTic=-1;decalLevelSerial=r_levelserial;}
 }
 // A block size map units across (tall times as high), but never under one
 // Doom pixel, set on the Doom-pixel grid at its depth: a pixel of an old
@@ -105,7 +112,7 @@ void flatImpactParticles(float x,float y,float z,bool ceiling,Image &image,float
 // Called only after a door actually moves upward. Emit at the two jambs,
 // never across the face; distance, cadence and a global budget bound the work.
 void doorMotion(sector_t *sector) {
-    if(!settings.doorSparks||gamestate!=GS_LEVEL||!players[displayplayer].mo)return;
+    if(!settings.breakableWalls||!settings.doorSparks||gamestate!=GS_LEVEL||!players[displayplayer].mo)return;
     int index=int(sector-sectors);
     if((leveltime+index)%3)return;
     dropOldLevelImpacts();
@@ -146,19 +153,34 @@ void doorDamage(line_t *line,int side,fixed_t fx,fixed_t fy,fixed_t fz,int broke
     float along=std::clamp(((units(fx)-span.a.x)*dx+(units(fy)-span.a.y)*dy)/len,0.0f,len);
     float nx=dy/len,ny=-dx/len,x=span.a.x+dx/len*along+nx*2,y=span.a.y+dy/len*along+ny*2;
     float z=std::clamp(units(fz),span.bottom,span.top),now=leveltime/(float)TICRATE;
+    if(broken<0){
+        doorShields.erase(std::remove_if(doorShields.begin(),doorShields.end(),[&](const auto &q){return q.line==line-lines&&q.side==side;}),doorShields.end());
+        if(doorShields.size()>=24)doorShields.erase(doorShields.begin());
+        doorShields.push_back({int(line-lines),side,-broken,along,z-span.anchor,now});
+        return;
+    }
     if(wallDecals.size()>=192)wallDecals.erase(wallDecals.begin());
     wallDecals.push_back({int(line-lines),side,1,along,z-span.anchor,now,broken?64.f:36.f,false});
-    int count=broken?32:12;
+    if(broken&&span.texture>0){
+        for(int row=0;row<3;++row)for(int col=0;col<3;++col){
+            if(doorPanels.size()>=96)doorPanels.erase(doorPanels.begin());
+            float w=len/3,h=(span.top-span.bottom)/3,u=(col+.5f)*w,zz=span.bottom+(row+.5f)*h;
+            bool hanging=row==2&&col!=1;float force=hanging?randomRange(35,65):randomRange(150,250);
+            doorPanels.push_back({span.a.x+dx/len*u-nx*3,span.a.y+dy/len*u-ny*3,zz,dx/len,dy/len,nx,ny,w*.46f,h*.46f,u,span.anchor-zz,
+                -nx*force+dx/len*randomRange(-35,35),-ny*force+dy/len*randomRange(-35,35),randomRange(40,95),now,randomRange(-4,4),texturetranslation[span.texture],int(sides[line->sidenum[side]].sector-sectors),hanging?randomRange(.35f,1.15f):0.f});
+        }
+    }
+    int count=broken?16:12;
     if(debris.size()+count>512)debris.erase(debris.begin(),debris.begin()+(debris.size()+count-512));
     for(int i=0;i<count;++i) {
         float out=randomRange(60,220),slide=randomRange(-140,140);
         std::array<float,3> color={1,.65f,.18f};
-        if(broken&&span.texture>0)color=texelColor(wallImage(texturetranslation[span.texture]));
+        if(broken&&i>=8&&span.texture>0)color=texelColor(wallImage(texturetranslation[span.texture]));
         float u=broken?randomRange(2,std::max(2.f,len-2)):along;
         float sx=span.a.x+dx/len*u+nx*2,sy=span.a.y+dy/len*u+ny*2;
         float sz=broken?randomRange(span.bottom,span.top):z;
         debris.push_back({sx,sy,sz,nx*out+dx/len*slide,ny*out+dy/len*slide,randomRange(40,160),now,
-            broken?1.2f:.4f,broken?randomRange(1.5f,3.f):1.f,color,broken?lighting(sides[line->sidenum[side]].sector):1.f});
+            broken?.8f:.4f,broken&&i>=8?randomRange(.5f,1.2f):.5f,color,broken&&i>=8?lighting(sides[line->sidenum[side]].sector):1.f});
     }
 }
 void solidBulletImpact(float x,float y,float z,float nx,float ny,float nz){
@@ -235,11 +257,142 @@ static const spritedef_t &effectSprite(game_sprite_role role) {
     int sprite=Game_Sprite(role);
     return sprite>=0&&sprite<numsprites?sprites[sprite]:none;
 }
+static void drawArenaBarrier(float now){
+    float x,y,r;int remaining;if(!P_ArenaView(&x,&y,&r,&remaining))return;
+    auto &out=effectAddBatches[surfaceGlowImage()];
+    auto vertex=[](float x,float y,float z,float alpha){return Vertex{x,y,z,0,0,alpha,0,1,.035f,.025f};};
+    for(int i=0;i<128;++i){
+        float a=i*6.2831853f/128,b=(i+1)*6.2831853f/128;
+        float ax=x+std::cos(a)*r,ay=y+std::sin(a)*r,bx=x+std::cos(b)*r,by=y+std::sin(b)*r;
+        auto *sec=R_PointInSubsector((ax+bx)*.5f*FRACUNIT,(ay+by)*.5f*FRACUNIT)->sector;
+        float lo=units(sec->floorheight),hi=units(sec->ceilingheight);if(hi<=lo)continue;
+        float glow=.09f+.025f*std::sin(now*3+a*4);
+        auto panel=[&](float z0,float z1,float alpha){auto A=vertex(ax,ay,z0,alpha),B=vertex(bx,by,z0,alpha),C=vertex(bx,by,z1,alpha),D=vertex(ax,ay,z1,alpha);quad(out,A,B,C,D);quad(out,D,C,B,A);};
+        panel(lo,hi,glow);panel(lo,lo+2,.65f);panel(hi-2,hi,.65f);
+        float scan=lo+std::fmod(now*24,hi-lo);panel(scan,std::min(scan+1.5f,hi),.3f);
+        if(!(i%8)){auto A=vertex(ax,ay,lo,.4f),B=vertex(ax+.6f,ay+.6f,lo,.4f),C=vertex(ax+.6f,ay+.6f,hi,.4f),D=vertex(ax,ay,hi,.4f);quad(out,A,B,C,D);quad(out,D,C,B,A);}
+    }
+}
+static void drawDoorShields(float now){
+    if(!settings.breakableWalls){doorShields.clear();return;}
+    doorShields.erase(std::remove_if(doorShields.begin(),doorShields.end(),[&](const auto &s){return now<s.born-.1f||now-s.born> 1.0f;}),doorShields.end());
+    auto &out=effectAddBatches[surfaceGlowImage()];
+    auto shieldQuad=[&](Vertex a,Vertex b,Vertex c,Vertex d){quad(out,a,b,c,d);quad(out,d,c,b,a);};
+    for(const auto &s:doorShields){
+        if(s.kind>=3?!settings.keyDoorShield:!settings.switchDoorShield)continue;
+        WallSpan span;if(!wallSpan(lines[s.line],s.side,1,span))continue;
+        float dx=span.b.x-span.a.x,dy=span.b.y-span.a.y,len=std::hypot(dx,dy);if(len<1)continue;
+        float age=std::max(0.f,now-s.born),fade=1-age;
+        std::array<float,3> color{1.f,.025f,.015f};
+        auto v=[&](float u,float z,float alpha){u=std::clamp(u,0.f,len);z=std::clamp(z,span.bottom,span.top);return Vertex{span.a.x+dx/len*u+dy/len*.7f,span.a.y+dy/len*u-dx/len*.7f,z,0,0,alpha*fade,0,color[0],color[1],color[2]};};
+        shieldQuad(v(0,span.bottom,.10f),v(len,span.bottom,.10f),v(len,span.top,.18f),v(0,span.top,.18f));
+        // Broad, feathered highlights suggest glass rather than a wire grid.
+        float sweep=len*(.18f+age*.55f),h=span.top-span.bottom;
+        for(int band=0;band<2;++band){
+            float u=sweep+band*len*.22f,w=std::max(3.f,len*.055f);
+            auto a=v(u-w,span.bottom,0),b=v(u,span.bottom,.14f),c=v(u+h*.22f,span.top,.22f),d=v(u-w+h*.22f,span.top,0);
+            for(auto *q:{&a,&b,&c,&d}){q->green=.30f;q->blue=.26f;}
+            shieldQuad(a,b,c,d);
+            a=v(u,span.bottom,.14f);b=v(u+w,span.bottom,0);c=v(u+w+h*.22f,span.top,0);d=v(u+h*.22f,span.top,.22f);
+            for(auto *q:{&a,&b,&c,&d}){q->green=.30f;q->blue=.26f;}
+            shieldQuad(a,b,c,d);
+        }
+        for(float u:{0.f,std::max(0.f,len-2)})
+            shieldQuad(v(u,span.bottom,.9f),v(u+2,span.bottom,.9f),v(u+2,span.top,.9f),v(u,span.top,.9f));
+        for(float z:{span.bottom,span.top-2})
+            shieldQuad(v(0,z,.9f),v(len,z,.9f),v(len,z+2,.9f),v(0,z+2,.9f));
+        // Expanding ripple, clipped to the real door face, works on narrow doors too.
+        for(int ring=0;ring<2;++ring){float radius=5+age*110-ring*9;if(radius<2)continue;
+            for(int n=0;n<48;++n){float a=n*6.2831853f/48,b=(n+1)*6.2831853f/48,z=span.anchor+s.z;
+                shieldQuad(v(s.along+std::cos(a)*radius,z+std::sin(a)*radius,.7f),v(s.along+std::cos(b)*radius,z+std::sin(b)*radius,.7f),v(s.along+std::cos(b)*(radius+2),z+std::sin(b)*(radius+2),.12f),v(s.along+std::cos(a)*(radius+2),z+std::sin(a)*(radius+2),.12f));
+            }
+        }
+    }
+}
+static void drawDoorPanels(float now){
+    doorPanels.erase(std::remove_if(doorPanels.begin(),doorPanels.end(),[&](const auto &p){return now<p.born||now-p.born>12;}),doorPanels.end());
+    for(const auto &p:doorPanels){
+        wallImage(p.texture);auto &out=batches[p.texture];
+        float floor=units(sectors[p.sector].floorheight)+2;
+        float land=(p.vz+std::sqrt(p.vz*p.vz+840*std::max(0.f,p.z-floor)))/420;
+        float age=std::max(0.f,now-p.born-p.delay),t=std::min(age,land),angle=age<land?p.spin*t:1.5707963f;
+        float x=p.x+p.vx*t,y=p.y+p.vy*t,z=std::max(floor,p.z+p.vz*t-210*t*t);
+        // Keep flying panels inside actual rooms, including the newly opened door.
+        WallHit hit;float distance=std::hypot(x-p.x,y-p.y);
+        if(distance>1&&firstSolidWall(p.x,p.y,p.z,(x-p.x)/distance,(y-p.y)/distance,(z-p.z)/distance,distance,hit)){
+            float f=std::max(0.f,hit.t-2)/distance;x=p.x+(x-p.x)*f;y=p.y+(y-p.y)*f;
+        }
+        // A closed, thin slab: textured faces plus darker torn edges.
+        // Delayed top pieces hang briefly before breaking loose.
+        z-=std::max(0.f,age-10)*2;
+        auto vertex=[&](float u,float v,float depth){return Vertex{x+p.tx*u+p.nx*(v*std::sin(angle)+depth*std::cos(angle)),y+p.ty*u+p.ny*(v*std::sin(angle)+depth*std::cos(angle)),z+v*std::cos(angle)-depth*std::sin(angle),p.u+u,p.v-v,lighting(&sectors[p.sector]),sectorMode(&sectors[p.sector])};};
+        const float shape[6][2]={{-1,-.75f},{-.6f,-1},{1,-.65f},{.88f,.9f},{0,1},{-1,.65f}};
+        auto tri=[&](Vertex a,Vertex b,Vertex c){out.insert(out.end(),{a,b,c,a,c,b});};
+        for(int i=0;i<6;++i){
+            auto a=vertex(shape[i][0]*p.w,shape[i][1]*p.h,-1.5f),b=vertex(shape[(i+1)%6][0]*p.w,shape[(i+1)%6][1]*p.h,-1.5f);
+            auto c=vertex(shape[i][0]*p.w,shape[i][1]*p.h,1.5f),d=vertex(shape[(i+1)%6][0]*p.w,shape[(i+1)%6][1]*p.h,1.5f);
+            tri(vertex(0,0,-1.5f),a,b);tri(vertex(0,0,1.5f),d,c);
+            for(auto *q:{&a,&b,&c,&d})q->light*=.55f;
+            tri(a,c,d);tri(a,d,b);
+        }
+    }
+    // Recheck attachments once per eight game tics, never once per rendered frame.
+    bool checkSupport=leveltime/8!=doorSupportTic;doorSupportTic=leveltime/8;
+    const auto *world=SV_MapWorld();
+    // Reconstruct frame remnants from saved door state, so reloads retain them.
+    for(int i=0;i<numsectors;++i){const auto &sec=sectors[i];if(sec.rocketdoorhits<3)continue;
+        for(int j=0;j<sec.linecount;++j){auto *line=sec.lines[j];int side=line->backsector==&sec?0:1;
+            if(line->sidenum[side]<0||!line->frontsector||!line->backsector)continue;
+            int texture=sides[line->sidenum[side]].toptexture;if(texture<=0)continue;
+            texture=texturetranslation[texture];wallImage(texture);auto &out=batches[texture];
+            float ax=units(line->v1->x),ay=units(line->v1->y),dx=units(line->dx),dy=units(line->dy),len=std::hypot(dx,dy);if(len<8)continue;
+            float bottom=units(sec.floorheight),top=units(sec.ceilingheight),h=top-bottom;
+            auto *front=sides[line->sidenum[side]].sector;
+            float light=lighting(front),offset=units(sides[line->sidenum[side]].textureoffset);
+            auto v=[&](float u,float z,float depth){return Vertex{ax+dx/len*u+dy/len*depth,ay+dy/len*u-dx/len*depth,z,u+offset,top-z,light,sectorMode(front)};};
+            auto tri=[&](Vertex a,Vertex b,Vertex c){out.insert(out.end(),{a,b,c,a,c,b});};
+            // Unequal torn strips with bent tips and dark exposed thickness.
+            // Stable seeds keep the same wreckage after loading a save.
+            unsigned seed=unsigned(line-lines)*1664525u+1013904223u;
+            auto rnd=[&](){seed=seed*1664525u+1013904223u;return float(seed>>8)/16777216.f;};
+            for(int edge=0;edge<3;++edge){
+                float extent=edge==2?len:h,pos=0;int piece=0;
+                while(pos<extent){
+                    float end=std::min(extent,pos+7+rnd()*16),middle=pos+(end-pos)*(.2f+rnd()*.6f);
+                    float tear=std::min(len*.09f,2+rnd()*7),bend=(rnd()-.5f)*7;
+                    auto point=[&](float along,float inward,float depth){
+                        return edge==2?v(along,top-inward,depth):v(edge==0?inward:len-inward,bottom+along,depth);
+                    };
+                    auto key=std::make_pair(int(line-lines),edge*65536+piece++);
+                    if(checkSupport&&world&&!detachedDoorEdges.count(key)){
+                        auto a=point(pos+(end-pos)*.2f,-3,3),b=point(pos+(end-pos)*.8f,-3,3);
+                        if(world->sample({a.x,a.y,a.z})<=0&&world->sample({b.x,b.y,b.z})<=0){
+                            detachedDoorEdges.insert(key);
+                            auto center=point(middle,tear*.5f,bend);
+                            if(doorPanels.size()>=96)doorPanels.erase(doorPanels.begin());
+                            doorPanels.push_back({center.x,center.y,center.z,dx/len,dy/len,dy/len,-dx/len,
+                                edge==2?(end-pos)*.45f:tear*.5f,edge==2?tear*.5f:(end-pos)*.45f,
+                                center.u,center.v,randomRange(-12,12),randomRange(-12,12),-8,now,randomRange(-3,3),texture,int(front-sectors),0});
+                        }
+                    }
+                    if(detachedDoorEdges.count(key)){pos=end;continue;}
+                    Vertex a=point(pos,0,.3f),b=point(middle,tear,bend),c=point(end,0,.3f);
+                    Vertex d=point(pos,0,2.3f),e=point(middle,tear,bend+2),f=point(end,0,2.3f);
+                    tri(a,b,c);tri(d,f,e);
+                    for(auto *q:{&d,&e,&f})q->light*=.55f;
+                    tri(a,d,e);tri(a,e,b);tri(b,e,f);tri(b,f,c);
+                    pos=end;
+                }
+            }
+        }
+    }
+}
 void buildImpacts(const Uniforms &camera) {
     for(auto &batch:decalBatches)batch.second.clear();
     particleVertices.clear();crestVertices.clear();crestCells.clear();
     dropOldLevelImpacts();
     float now=gameSeconds();
+    drawDoorPanels(now);
     scorches.erase(std::remove_if(scorches.begin(),scorches.end(),[&](const Scorch &d){return now-d.born>60||now<d.born;}),scorches.end());
     const auto &blast=effectSprite(GAME_SPRITE_EXPLOSION);
     if(blast.numframes>2&&!scorches.empty()) {
@@ -259,6 +412,8 @@ void buildImpacts(const Uniforms &camera) {
     drawImpactParticles(camera);
     drawFluidEffects(camera);
     drawSurfaceGlows();
+    drawDoorShields(now);
+    drawArenaBarrier(now);
     buildEnvironment(camera);
     buildElectricalArcs(camera);
     // Debris moves at the tic rate, like the rings, stretches upright while

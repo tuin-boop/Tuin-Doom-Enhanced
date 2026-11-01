@@ -107,7 +107,7 @@ bool createPipelines() {
     SDL_GPUShader *particle=FRAGMENT_SHADER(particle_frag,0,0,0),*solid=FRAGMENT_SHADER(solid_frag,0,0,0),*hud=FRAGMENT_SHADER(hud_frag,1,0,0);
     SDL_GPUShader *heat=FRAGMENT_SHADER(heat_frag,0,0,0),*glass=FRAGMENT_SHADER(glass_frag,4,1,4);
     SDL_GPUShader *emission=FRAGMENT_SHADER(emission_frag,5,1,2),*blur=FRAGMENT_SHADER(blur_frag,1,0,1);
-    SDL_GPUShader *mist=FRAGMENT_SHADER(mist_frag,2,0,1),*present=FRAGMENT_SHADER(present_frag,4,0,2),*depth=FRAGMENT_SHADER(depth_frag,1,0,0);
+    SDL_GPUShader *mist=FRAGMENT_SHADER(mist_frag,2,0,1),*present=FRAGMENT_SHADER(present_frag,5,0,3),*depth=FRAGMENT_SHADER(depth_frag,1,0,0);
     const auto color=SDL_GPU_TEXTUREFORMAT_B8G8R8A8_UNORM,glow=SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT;
     const auto one=SDL_GPU_SAMPLECOUNT_1,msaa=sampleCount;
     SDL_GPUShader *wv=worldVertexShader,*rv=reflectVertexShader,*sv=screenVertexShader,*kv=skyVertexShader;

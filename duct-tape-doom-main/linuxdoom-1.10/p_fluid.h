@@ -2,7 +2,9 @@
 #define P_FLUID_H
 #include "p_mobj.h"
 extern int p_fluidweapons, p_fluidmonsters;
+extern int p_netfluidweapons,p_netfluidfastpistol;
 int P_FluidWeaponsEnabled(void);
+int P_FluidFastPistolEnabled(void);
 int P_FluidEnabled(void);
 void P_FluidReset(void);
 void P_FluidRemove(mobj_t *actor);

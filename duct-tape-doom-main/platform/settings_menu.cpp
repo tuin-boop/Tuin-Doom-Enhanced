@@ -16,7 +16,9 @@ extern "C" {
 #include "z_zone.h"
 #include "doomstat.h"
 #include "g_game.h"
+#include "i_lan.h"
 extern boolean paused;
+extern void M_OpenLanMenu(void);
 }
 #include <SDL3/SDL.h>
 #include "i_render3d.h"
@@ -44,7 +46,14 @@ static int selectedMap=0;
 static std::vector<std::string> mapNames;
 static std::vector<std::pair<int,int>> mapNumbers;
 void closePanel();
+void openMultiplayer(){closePanel();M_OpenLanMenu();}
+void addMultiplayerTab(){
+    Option lobby{};lobby.kind=OptionKind::Action;lobby.key="";lobby.title="Host / join LAN game";
+    lobby.tip="Open the multiplayer menu. Host a match or join another computer on your LAN. Use the same build and game files.";lobby.action=openMultiplayer;
+    panel.tabs.insert(panel.tabs.begin(),{"Multiplayer",{{"LAN multiplayer",{lobby}}}});
+}
 void startSelectedMap(){
+    if(netgame)return;
     if(selectedMap<0||selectedMap>=(int)mapNumbers.size())return;
     auto map=mapNumbers[selectedMap];closePanel();
     G_DeferedInitNew(gameskill,map.first,map.second);
@@ -364,15 +373,30 @@ void I_Render3DSettingsMenu(void) {
     panel.defaults=Settings{};fitGame(panel.defaults);
     panel.tabs=optionTabs(panel.draft);
     addMapTab();
+    addMultiplayerTab();
     selectTab(panel.tab);
-    panel.wasPaused=paused;paused=true;
+    panel.wasPaused=paused;if(!netgame)paused=true;
     panel.open=true;
     S_StartSound(NULL,Game_MenuSound(GAME_MENU_OPEN));
 }
 
-int I_Render3DSettingsOpen(void) { return panel.open; }
+int I_Render3DSettingsOpen(void) { return panel.open||lan_menu; }
 
 void I_Render3DSettingsKey(int scancode,int shift) {
+    if(lan_menu){
+        int key=0;
+        switch(scancode){
+        case SDL_SCANCODE_UP:key=KEY_UPARROW;break;case SDL_SCANCODE_DOWN:key=KEY_DOWNARROW;break;
+        case SDL_SCANCODE_LEFT:key=KEY_LEFTARROW;break;case SDL_SCANCODE_RIGHT:key=KEY_RIGHTARROW;break;
+        case SDL_SCANCODE_RETURN:case SDL_SCANCODE_KP_ENTER:key=KEY_ENTER;break;
+        case SDL_SCANCODE_ESCAPE:case SDL_SCANCODE_F4:key=KEY_ESCAPE;break;
+        case SDL_SCANCODE_BACKSPACE:key=KEY_BACKSPACE;break;case SDL_SCANCODE_PERIOD:case SDL_SCANCODE_KP_PERIOD:key='.';break;
+        case SDL_SCANCODE_R:key='r';break;case SDL_SCANCODE_0:case SDL_SCANCODE_KP_0:key='0';break;
+        default:if(scancode>=SDL_SCANCODE_1&&scancode<=SDL_SCANCODE_9)key='1'+scancode-SDL_SCANCODE_1;
+            if(scancode>=SDL_SCANCODE_KP_1&&scancode<=SDL_SCANCODE_KP_9)key='1'+scancode-SDL_SCANCODE_KP_1;break;
+        }
+        if(key)M_LanKey(key);return;
+    }
     if(!panel.open)return;
     if(panel.binding){
         if(scancode==SDL_SCANCODE_ESCAPE){panel.binding=false;return;}
@@ -408,6 +432,15 @@ void I_Render3DSettingsKey(int scancode,int shift) {
 }
 
 void I_Render3DSettingsClick(int x,int y,int button) {
+    if(lan_menu){
+        if(y/cellHeight==helpRow&&button==1){M_LanKey(KEY_ESCAPE);return;}
+        int row=(y/cellHeight-2)/2;
+        if(x>=leftColumn*cellWidth&&x<rightColumn*cellWidth&&y>=2*cellHeight&&row>=0&&row<(lan_character?2:lan_browse?8:9)){
+            int index=lan_browse?(lan_choice/8)*8+row:row;
+            if(!lan_browse||index<lan_game_count){lan_choice=index;if(button)M_LanKey(button==1?KEY_ENTER:KEY_LEFTARROW);}
+        }
+        return;
+    }
     if(panel.binding)return;
     if(!panel.open||x<0||y<0||x>=width||y>=height)return;
     if(panel.aiWarning){if(button)panel.aiWarning=0;return;}
@@ -436,6 +469,36 @@ void I_Render3DSettingsClick(int x,int y,int button) {
 }
 
 void I_Render3DSettingsDraw(unsigned *pixels) {
+    if(lan_menu){
+        image=pixels;loadFont();fill(0,0,width,height,backdrop);
+        fill(8,24,(leftColumn-2)*cellWidth,280,0xe0101010);
+        drawText("SETTINGS",2,0,heading);fill(8,rowY(2),(leftColumn-2)*cellWidth,cellHeight,tabBar);
+        drawText("MULTIPLAYER",2,2,bright);drawText("LAN",2,4,description);
+        drawText(lan_character?"CHARACTER":lan_browse?"BROWSE LAN GAMES":"MULTIPLAYER",leftColumn,0,heading);drawSeparator(1);
+        char label[100];int count=lan_character?2:lan_browse?8:9;
+        for(int i=0;i<count;i++){
+            M_LanRow(i,label,sizeof(label));if(!*label)continue;
+            int row=2+i*2;bool selected=i==(lan_browse?lan_choice%8:lan_choice);
+            if(selected)fill((leftColumn+1)*cellWidth,rowY(row),(rightColumn-leftColumn)*cellWidth,cellHeight,selectionBar);
+            bool enabled=lan_character||lan_browse||(!(lan_lobby||lan_session)||i==6||i==8||(i==7&&lan_host&&!lan_session));
+            drawText(clipped(label,(rightColumn-leftColumn-2)*cellWidth),leftColumn+2,row,!enabled?dim:selected?bright:text);
+        }
+        if(lan_browse&&!lan_game_count){drawText("Searching for hosts...",leftColumn+2,3,description);drawText("No games found yet. Try Join by IP.",leftColumn+2,5,description);}
+        drawSeparator(19);drawText(clipped(lan_status,608),2,20,heading);
+        if(lan_browse&&lan_game_count&&lan_choice<lan_game_count){
+            const auto &g=lan_games[lan_choice];
+            if(gamemode==commercial)snprintf(label,sizeof(label),"%s / MAP%02d / %d OF 4 PLAYERS",g.address,g.map,g.players);
+            else snprintf(label,sizeof(label),"%s / E%dM%d / %d OF 4 PLAYERS",g.address,g.episode,g.map,g.players);
+            drawText(label,2,21,description);
+            drawText(g.compatible?"Enter: join this game (also while playing)":"Different build or game files - cannot join",2,22,g.compatible?description:heading);
+        }else{
+            const char *a=getenv("TUIN_LAN_ADDRESSES");
+            drawText(clipped(lan_host&&(lan_lobby||lan_session)&&a?std::string("HOST: ")+a:"Players can join before or during a match.",608),2,21,description);
+            drawText("Host sets friendly fire before starting the match.",2,22,description);
+        }
+        drawText(lan_browse?"Arrows: select  Enter: join  R: refresh":"Arrows: select / change  Enter: choose",2,helpRow,description);
+        drawTextRight("Esc: back",78,helpRow,bright);return;
+    }
     if(!panel.open)return;
     image=pixels;
     loadFont();

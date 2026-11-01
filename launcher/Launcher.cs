@@ -14,6 +14,7 @@ using System.Xml.Linq;
 
 internal static class Data {
     internal static readonly string Home = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DERPSolidMapsLauncher");
+    internal static readonly string Screenshots = Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"Screenshots");
     internal static string Quote(string s) {
         var b=new StringBuilder("\"");int slashes=0;
         foreach(char c in s) {
@@ -188,6 +189,11 @@ internal sealed class Launcher : Form {
         Button("Browse...",610,81,108,BrowseGame);
         scan=Button("Scan for IWADs",20,123,155,()=>Scan(null));
         Button("Scan folder...",185,123,140,()=>{using(var d=new FolderBrowserDialog()) { d.Description="Scan this folder and its subfolders for Doom IWADs"; if(d.ShowDialog()==DialogResult.OK) Scan(new[]{d.SelectedPath}); }});
+        Button("Multiplayer",490,123,228,()=>PlayLan());
+        Button("Screenshots",340,123,140,()=>{
+            try { Directory.CreateDirectory(Data.Screenshots);Process.Start(new ProcessStartInfo(Data.Screenshots){UseShellExecute=true}); }
+            catch(Exception e){MessageBox.Show(this,e.Message,"Cannot open screenshots");}
+        });
         Label("Add-ons - loaded from top to bottom (later files override earlier files)",20,173,700,25);
         mods.SetBounds(20,204,580,149); mods.HorizontalScrollbar=true; mods.AllowDrop=true; Controls.Add(mods);
         mods.DragEnter+=(s,e)=>{ if(e.Data.GetDataPresent(DataFormats.FileDrop)) e.Effect=DragDropEffects.Copy; };
@@ -245,23 +251,33 @@ internal sealed class Launcher : Form {
         } catch {status.Text="Could not restore saved choices.";}
     }
     void Save() { try { Directory.CreateDirectory(Data.Home);new XDocument(new XElement("launcher",games.Items.Cast<string>().Select(p=>new XElement("iwad",p)),new XElement("selected",games.SelectedItem??""),mods.Items.Cast<string>().Select(p=>new XElement("mod",p)))).Save(settings); } catch(Exception e) { status.Text="Settings not saved: "+e.Message; } }
-    async void Play() {
+    void Play(){PlaySession(false);}
+    void PlayLan(){PlaySession(true);}
+    async void PlaySession(bool multiplayer) {
         if(games.SelectedItem==null) { BrowseGame();return; }
         play.Enabled=false;
+        foreach(Control control in Controls)control.Enabled=false;
         try {
             string game=(string)games.SelectedItem;
             if(!Data.Iwad(game))throw new IOException("The selected IWAD is missing or invalid.");
             if(mods.Items.Count>18)throw new IOException("Choose at most 18 add-ons.");
             var files=mods.Items.Cast<string>().ToArray();
             string args=await Task.Run(()=>Data.BundledArguments(game,files));
+            string engine=await Task.Run(()=>Data.Engine());
+            status.Text="Checking game files for LAN...";
+            var packs=new[]{Data.BundledResource("FluidWeapons.pk3"),Data.BundledResource("FluidWeapons-SFX.pk3"),Data.BundledResource("FluidMonsters.pk3")};
+            string signature=await Task.Run(()=>LanMenu.Fingerprint(engine,game,packs.Concat(files.Where(f=>Data.FluidPack(f)==0)).ToArray()));
+            if(multiplayer)args+=" -lanmenu";
             string profile=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),"Local Games","DERP Solid Maps");
             Directory.CreateDirectory(profile);
             string graphics=Path.Combine(profile,"graphics.cfg");
             if(!File.Exists(graphics))File.Copy(Data.BundledResource("graphics.cfg"),graphics);
             args+=" -graphics "+Data.Quote(graphics);
             Save();status.Text="Starting Tuin-Doom-Enhanced...";
-            string engine=await Task.Run(()=>Data.Engine());
             var start=new ProcessStartInfo(engine,args) { WorkingDirectory=Data.Home,UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true };
+            start.EnvironmentVariables["TUIN_SCREENSHOTS"]=Data.Screenshots;
+            start.EnvironmentVariables["TUIN_LAN_SIGNATURE"]=signature;
+            try { start.EnvironmentVariables["TUIN_LAN_ADDRESSES"]=String.Join(" / ",System.Net.Dns.GetHostAddresses(System.Net.Dns.GetHostName()).Where(a=>a.AddressFamily==System.Net.Sockets.AddressFamily.InterNetwork).Select(a=>a.ToString())); } catch(System.Net.Sockets.SocketException) { }
             using(var p=Process.Start(start)) {
                 var stdout=p.StandardOutput.ReadToEndAsync();var stderr=p.StandardError.ReadToEndAsync();
                 status.Text="Game running. Close the game to return here.";
@@ -270,7 +286,7 @@ internal sealed class Launcher : Form {
                 status.Text=p.ExitCode==0?"Ready":"Game exited with an error. See last-game.log in launcher data.";
             }
         } catch(Exception e) { MessageBox.Show(this,e.Message,"Cannot start game",MessageBoxButtons.OK,MessageBoxIcon.Information);status.Text="Ready"; }
-        finally {if(!IsDisposed)play.Enabled=true;}
+        finally {if(!IsDisposed){foreach(Control control in Controls)control.Enabled=true;play.Enabled=true;}}
     }
 }
 

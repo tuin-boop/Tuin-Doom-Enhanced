@@ -35,6 +35,11 @@ static const char rcsid[] = "$Id: d_net.c,v 1.3 1997/02/03 22:01:47 b1 Exp $";
 #include "doomdef.h"
 #include "doomstat.h"
 #include "r_state.h"
+#include "p_fluid.h"
+#include "m_argv.h"
+#include "i_lan.h"
+#include <string.h>
+extern int p_fluidfastpistol;
 
 #define	NCMD_EXIT		0x80000000
 #define	NCMD_RETRANSMIT		0x40000000
@@ -370,6 +375,7 @@ int      gametime;
 
 void NetUpdate (void)
 {
+    if(lan_session)return;
     int             nowtime;
     int             newtics;
     int				i,j;
@@ -501,14 +507,20 @@ void D_ArbitrateNetStart (void)
 		deathmatch = (netbuffer->retransmitfrom & 0xc0) >> 6;
 		nomonsters = (netbuffer->retransmitfrom & 0x20) > 0;
 		respawnparm = (netbuffer->retransmitfrom & 0x10) > 0;
-		startmap = netbuffer->starttic & 0x3f;
-		startepisode = netbuffer->starttic >> 6;
+		if(netbuffer->numtics!=1)I_Error("Incompatible LAN setup packet");
+        startmap=(unsigned char)netbuffer->cmds[0].sidemove;
+        startepisode=(unsigned char)netbuffer->cmds[0].forwardmove;
+        p_netfluidweapons=(netbuffer->cmds[0].buttons&1)!=0;
+        p_netfluidfastpistol=(netbuffer->cmds[0].buttons&2)!=0;
+        if(p_netfluidweapons&&!M_CheckParm("-fluidweapons"))I_Error("Host requires Fluid Weapons resources");
 		return;
 	    }
 	}
     }
     else
     {
+	p_netfluidweapons=p_fluidweapons&&M_CheckParm("-fluidweapons");
+    p_netfluidfastpistol=p_fluidfastpistol;
 	// key player, send the setup info
 	printf ("sending network start info...\n");
 	do
@@ -525,7 +537,11 @@ void D_ArbitrateNetStart (void)
 		    netbuffer->retransmitfrom |= 0x10;
 		netbuffer->starttic = startepisode * 64 + startmap;
 		netbuffer->player = VERSION;
-		netbuffer->numtics = 0;
+        netbuffer->numtics = 1;
+        memset(&netbuffer->cmds[0],0,sizeof(ticcmd_t));
+        netbuffer->cmds[0].forwardmove=(char)startepisode;
+        netbuffer->cmds[0].sidemove=(char)startmap;
+        netbuffer->cmds[0].buttons=(p_netfluidweapons?1:0)|(p_netfluidfastpistol?2:0);
 		HSendPacket (i, NCMD_SETUP);
 	    }
 
@@ -636,6 +652,8 @@ int	oldnettics;
 
 extern	boolean	advancedemo;
 
+
+#include "d_lan_impl.h"
 void TryRunTics (void)
 {
     int		i;
@@ -647,7 +665,29 @@ void TryRunTics (void)
     int		counts;
     int		numplaying;
     
-    // get real tics		
+    I_LanPoll();
+    if(lan_pending){
+        extern boolean netdemo;
+        extern short consistancy[MAXPLAYERS][BACKUPTICS];
+        extern void M_LanStarted(void);
+        I_LanActivate();netbuffer=&doomcom->data;
+        consoleplayer=displayplayer=doomcom->consoleplayer;
+        memset(localcmds,0,sizeof(localcmds));memset(netcmds,0,sizeof(netcmds));
+        memset(consistancy,0,sizeof(consistancy));memset(nettics,0,sizeof(nettics));
+        memset(remoteresend,0,sizeof(remoteresend));memset(resendto,0,sizeof(resendto));
+        memset(resendcount,0,sizeof(resendcount));memset(nodeforplayer,0,sizeof(nodeforplayer));
+        memset(frameskip,0,sizeof(frameskip));memset(frametics,0,sizeof(frametics));
+        for(i=0;i<MAXNETNODES;i++)nodeingame[i]=i<doomcom->numnodes;
+        for(i=0;i<MAXPLAYERS;i++)playeringame[i]=i<doomcom->numplayers;
+        gametic=maketic=skiptics=lastnettic=frameon=oldnettics=0;ticdup=1;maxsend=BACKUPTICS/2-1;
+        gametime=oldentertics=I_GetTime();reboundpacket=false;
+        deathmatch=lan_mode;respawnparm=fastparm=nomonsters=false;
+        demoplayback=demorecording=netdemo=advancedemo=false;gameaction=ga_nothing;
+        M_LanStarted();G_InitNew((skill_t)lan_skill,lan_episode,lan_map);
+        gametime=oldentertics=lanClock=lanInputClock=I_GetTime();return;
+    }
+    if(lan_session){lanRunTics();return;}
+    // get real tics
     entertic = I_GetTime ()/ticdup;
     realtics = entertic - oldentertics;
     oldentertics = entertic;
@@ -676,7 +716,7 @@ void TryRunTics (void)
     else
 	counts = availabletics;
     
-    if (r_uncapped && !netgame && availabletics < 1)
+    if (r_uncapped && availabletics < 1)
         return;
     if (counts < 1)
 	counts = 1;

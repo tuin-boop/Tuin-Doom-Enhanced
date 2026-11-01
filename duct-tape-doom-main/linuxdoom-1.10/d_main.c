@@ -376,6 +376,7 @@ void D_DoomLoop (void)
     }
 	
     I_InitGraphics ();
+    if(M_CheckParm("-lanmenu")){extern void M_OpenLanMenu(void);M_OpenLanMenu();}
 
     const int profileSteps=M_CheckParm("-profilegamesteps");
     while (1)

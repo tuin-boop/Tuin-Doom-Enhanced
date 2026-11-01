@@ -361,6 +361,7 @@ void P_DeathThink (player_t* player)
 void P_PlayerThink (player_t* player)
 {
     P_NoticeTick(player);
+    P_UpdateChaingunAmmo(player);
     ticcmd_t*		cmd;
     weapontype_t	newweapon;
 	

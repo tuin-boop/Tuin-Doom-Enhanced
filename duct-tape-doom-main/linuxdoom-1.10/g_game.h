@@ -42,6 +42,7 @@ void G_InitNew (skill_t skill, int episode, int map);
 void G_DeferedInitNew (skill_t skill, int episode, int map);
 // Steps to the next (step 1) or previous (-1) map present in the WADs.
 boolean G_StepMap (int step, int* episode, int* map);
+boolean G_MapExists (int episode, int map);
 
 void G_DeferedPlayDemo (char* demo);
 

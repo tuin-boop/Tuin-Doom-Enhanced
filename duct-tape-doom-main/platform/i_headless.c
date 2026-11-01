@@ -45,6 +45,7 @@ void I_InitNetwork(void)
     netgame = false;
 }
 void I_NetCmd(void) { I_Error("Network commands are unavailable in the headless backend"); }
+#include "i_lan_unavailable.h"
 
 void I_InitSound(void) { }
 void I_ShutdownSound(void) { }

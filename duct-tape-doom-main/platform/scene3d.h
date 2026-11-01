@@ -164,6 +164,9 @@ struct Settings {
     int breakableWalls=1;
     int throughWalls=0;
     int breachDoors=0;
+    int keyArena=0,arenaRadius=512,monsterRecovery=1,boostChaingun=0;
+    int doorBlowout=0;
+    int keyDoorShield=1,switchDoorShield=1;
     int wallDamage=250;
     int deeperDig=0;
     int monsterSurfaceDamage=1;
@@ -177,6 +180,9 @@ struct Settings {
     int combatNotices=1;
     int fluidWeapons=1,fluidSounds=1,fluidMonsters=1;
     int fluidRocketFire=1;
+    int fluidFiringSmoke=1,fluidReloadSmoke=1,fluidHotSmoke=1,fluidSmokeBio=0,fluidIndoorSmoke=0;
+    float fluidSmokeDuration=2;
+    int fluidSawSmoke=1,fluidSawBlood=1,fluidIdleGestures=1;
     int materialRubble=1;
     int liquidProjectileImpacts=1;
     int progressiveGlass=1,hiddenMachinery=1,adjacentReverb=1;

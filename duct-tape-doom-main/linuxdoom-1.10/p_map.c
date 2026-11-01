@@ -1,3 +1,5 @@
+#include "i_lan.h"
+#include "p_arena.h"
 #include <stdint.h>
 // Emacs style mode select   -*- C++ -*- 
 //-----------------------------------------------------------------------------
@@ -108,6 +110,7 @@ boolean PIT_StompThing (mobj_t* thing)
     if ( !tmthing->player && gamemap != 30)
 	return false;	
 		
+    if(lan_session&&!deathmatch&&!lan_friendlyfire&&thing->player&&tmthing->player)return false;
     P_DamageMobj (thing, tmthing, tmthing, 10000);
 	
     return true;
@@ -132,6 +135,12 @@ P_TeleportMove
     
     subsector_t*	newsubsec;
     
+    if(P_ArenaBlocks(thing,x,y)){
+        /* P_Move consumes these even on failure. Its special-line loop can
+           leave numspechit at -1, so never reuse a previous collision result. */
+        floatok=false;numspechit=0;
+        return false;
+    }
     // kill anything occupying the position
     tmthing = thing;
     tmflags = thing->flags;
@@ -618,6 +627,12 @@ P_TryMove
     int		oldside;
     line_t*	ld;
 
+    if(P_ArenaBlocks(thing,x,y)){
+        /* P_Move consumes these even on failure. Its special-line loop can
+           leave numspechit at -1, so never reuse a previous collision result. */
+        floatok=false;numspechit=0;
+        return false;
+    }
     floatok = false;
     if (!P_CheckPosition (thing, x, y))
 	return false;		// solid wall or thing
@@ -1115,8 +1130,12 @@ static boolean PTR_ShootPlane (fixed_t frac)
     la_endfrac = frac;
 
     if(la_damage>0)P_GlobalDigBulletFlat(shootthing,(int)(la_sector-sectors),ceiling,x,y);
-    if (!R_PlaneImpact || !R_PlaneImpact (la_sector, ceiling, x, y, z))
-	P_SpawnPuff (x, y, z);
+    /* Presentation must never change the synchronized thinker list or RNG.
+       A client can replace the visible puff locally, but the simulation
+       must create the same puff on every peer. */
+    boolean visualImpact=R_PlaneImpact && R_PlaneImpact(la_sector,ceiling,x,y,z);
+    if (netgame || !visualImpact)
+        P_SpawnPuff (x, y, z);
     return false;
 }
 
@@ -1288,7 +1307,10 @@ boolean PTR_ShootTraverse (intercept_t* in)
 	P_SpawnPuff (x,y,z);
     else
     {
-	P_SpawnBlood (x,y,z, la_damage);
+	/* Blood-only translation tag is saved with the ordinary actor flags. */
+        mobj_t *blood = P_SpawnBlood (x,y,z, la_damage);
+        int tint = th->type == MT_HEAD ? 1 : (th->type == MT_BRUISER || th->type == MT_KNIGHT) ? 2 : 0;
+        blood->flags |= tint << MF_TRANSSHIFT;
 	if (R_BloodHit)
 	    R_BloodHit (th, shootthing, x, y, z, trace.dx, trace.dy, aimslope, la_damage);
     }

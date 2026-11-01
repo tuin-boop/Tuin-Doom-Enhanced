@@ -321,7 +321,11 @@ static void impact(float *point,int owner,float radius,float depth=0){
   float gain=std::abs(point[5])>.8f?1.f:std::clamp(float(p_wall_damage)/100,1.f,5.f);
   float stretch=depth>0?std::max(.01f,depth*2/radius)*gain:gain;
   lab::Vec center=origin+inward*(depth>0?-depth*gain:radius*.4f*gain);
+  // Include the entire anisotropic cut and its inward offset, not just the hit.
+  float shieldReach=radius*std::max(1.f,stretch)+std::abs(depth>0?-depth*gain:radius*.4f*gain);
+  if(P_DoorShieldVolume(origin.x*FRACUNIT,origin.y*FRACUNIT,origin.z*FRACUNIT,shieldReach))return;
   mapWorld.solidOwner(origin+inward*.5f,sector,plane,anchor);
+  if(sector>=0&&plane==1&&P_DoorShieldImpact(sector,point[0]*FRACUNIT,point[1]*FRACUNIT,point[2]*FRACUNIT))return;
   if(sector>=0&&std::abs(point[5])>.8f&&!P_GlobalDigSolidFlat(sector,plane))return;
   if(sector>=0&&!sectorMoves(sector,plane))sector=-1;
   if(M_CheckParm((char*)"-profilesolid"))printf("MAP impact %.2f %.2f %.2f normal %.2f %.2f %.2f owner %d plane %d anchor %.2f\n",

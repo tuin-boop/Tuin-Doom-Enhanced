@@ -80,3 +80,15 @@ void I_Render3DWheelMove(float x,float y);
 }
 #endif
 #endif
+
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+int I_PhotoKey(int key);
+void *I_PhotoSubject(void);
+void I_PhotoMove(float x,float y);
+void I_PhotoZoom(float wheel);
+#ifdef __cplusplus
+}
+#endif

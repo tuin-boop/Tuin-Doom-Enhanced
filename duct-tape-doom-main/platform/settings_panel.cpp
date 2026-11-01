@@ -121,6 +121,12 @@ std::vector<OptionTab> optionTabs(Settings &s) {
                 check("ps2_style","PS2-style filter",&s.ps2Style,"Chunkier surface textures, stepped shading and a subtle warm color finish. Keeps geometry, collision, HUD and menus unchanged. Off restores your normal rendering settings.",[](const Settings &d){return d.accelerated!=0;}),
                 check("retro","Retro scanlines",&s.retro,"Dark lines between the rows of the picture, like an old CRT monitor."),
                 check("palette","Doom palette colors",&s.palette,"Quantize the final lighting and fog to the current WAD palette.")}}}},
+        {"Gameplay",{
+            {"Combat and arenas",{
+                check("boost_chaingun","Enhanced chaingun",&s.boostChaingun,"50% faster chaingun fire. Backpack bullet capacity increases from 400 to 600; without a backpack it stays 200. Bullets are shared with the pistol. Turning off restores the normal cap and clips excess bullets. Works with classic and Fluid weapons; disabled in Arcade, demos and multiplayer."),
+                check("monster_recovery","Stuck monster recovery",&s.monsterRecovery,"Helps monsters after repeated failed movement. Tries small escape steps first. Trapped lockdown enemies can teleport to safe explored ground; ordinary monsters require invalid footing and a nearby visible safe spot. Disabled in Arcade, demos and multiplayer."),
+                check("key_arena","Key pickup lockdown arenas",&s.keyArena,"Picking up a new card or skull triggers three ammo-scaled waves totaling 7-25 monsters on explored ground. Announcement finishes before spawning. Maximum two of each heavy type and one of each boss per encounter. Red barrier releases after wave three. After two minutes the lockdown ends automatically and remaining encounter monsters are removed. Single player only; disabled in Arcade and demos."),
+                choice("arena_radius","Arena radius",&s.arenaRadius,{"Compact","Standard","Large"},{384,512,768},"Radius in map units: 576 / 768 / 1152. Used for the next lockdown.",[](const Settings &d){return d.keyArena!=0;})}}}},
         {"Environment",{
             {"Effect controls",{
                 check("environment_effects","Environmental reactions",&s.environmentEffects,"Master switch for pressure dust, settling dust, debris splashes and electrical sputtering. Collapse gameplay has separate controls under Destruction."),
@@ -143,8 +149,11 @@ std::vector<OptionTab> optionTabs(Settings &s) {
                 check("player_surface_damage","Player weapon surface damage",&s.playerSurfaceDamage,solidMapText("Player bullets and non-rocket projectiles make small chips in solid surfaces. Requires Breakable surfaces. Rockets remain controlled by Breakable surfaces. Actor damage is unchanged.","Bullets and shotgun pellets gradually chip surfaces; plasma makes shallow craters and a direct BFG projectile hit digs harder than a rocket. Requires Breakable surfaces. Rockets retain their existing damage. Actor damage is unchanged."),[](const Settings &d){return d.breakableWalls!=0;}),
                 check("monster_surface_damage","Monster projectile damage",&s.monsterSurfaceDamage,solidMapText("Non-rocket monster projectiles make small chips in walls, floors and ceilings on direct hits. Requires Breakable surfaces. Does not change damage to actors.","Monster fireballs, revenant missiles and arachnotron plasma chip walls, floors and ceilings at one eighth of rocket strength on direct hits. Requires Breakable surfaces. Does not change damage to actors or rocket explosions."),[](const Settings &d){return d.breakableWalls!=0;}),
                 check("deeper_digging","Deeper digging (up to 4096 units)",&s.deeperDig,solidMapText("Increases the maximum depth of new excavation from 256 to 4096 map units. New tunnels remain enclosed by solid material. Existing cuts are retained when disabled.","Extends wall/door breaches to 4096 units and enclosed floor/ceiling digging to 256 units. Requires Through-wall breaches or Breachable doors plus Breakable surfaces. Only connects to a valid room; outside-map walls stay sealed. Off restores standard limits without erasing damage."),[](const Settings &d){return d.breakableWalls&&(d.throughWalls||d.breachDoors);}),
-                check("breach_doors","Breachable doors (can break maps)",&s.breachDoors,"WARNING: Allows blasting through doors, including locked doors. Can bypass keys, switches and progression and break map scripts. Off by default. Requires Breakable surfaces. Holes move with the door. Independent of Through-wall breaches."),
-                check("door_sparks","Opening door sparks",&s.doorSparks,"Small sparks along the side tracks while a nearby door opens. Cosmetic only.")}},
+                check("door_blowout","Third-rocket door blowout",&s.doorBlowout,"Optional extra behaviour: three direct player rocket hits blow out a supported door permanently. Textured panels fly out, leaving torn frame edges. Off preserves normal destruction. Standard manual, key and switch doors are supported, including small and exit-marked doors. Unknown scripted actions are excluded. Existing blowouts remain when disabled.",[](const Settings &d){return d.breakableWalls!=0;}),
+                check("key_door_shield","Key-locked door shields",&s.keyDoorShield,"Protect key-locked doors and their surrounding 128-unit frame area from destruction with a red glass shield. Existing damage is not repaired.",[](const Settings &d){return d.breakableWalls!=0;}),
+                check("switch_door_shield","Switch-operated door shields",&s.switchDoorShield,"Protect switch and trigger doors and their surrounding 128-unit frame area from destruction with a red glass shield. Locked switch doors use the key shield setting.",[](const Settings &d){return d.breakableWalls!=0;}),
+                check("breach_doors","Breachable doors (can break maps)",&s.breachDoors,"WARNING: Allows blasting through doors, including locked doors. Can bypass keys, switches and progression and break map scripts. Off by default. Requires Breakable surfaces. Holes move with the door. Independent of Through-wall breaches.",[](const Settings &d){return d.breakableWalls!=0;}),
+                check("door_sparks","Opening door sparks",&s.doorSparks,"Small sparks along the side tracks while a nearby door opens. Cosmetic only.",[](const Settings &d){return d.breakableWalls!=0;})}},
             {"Collapse gameplay",{
                 check("chain_collapses","Local chain collapses",&s.chainCollapses,"Unsupported fragments near new damage fall away. Falling fragments can chip another surface below. Limited to two generations; saved geometry and collision stay together. Requires Breakable surfaces and solid-map mode.",[](const Settings &d){return d.breakableWalls!=0;}),
                 check("hanging_fragments","Delay before fragments fall",&s.hangingFragments,"Unsupported geometry briefly hangs before collapsing. Off makes it fall immediately. Requires Local chain collapses.",[](const Settings &d){return d.breakableWalls&&d.chainCollapses;}),
@@ -262,6 +271,18 @@ std::vector<OptionTab> optionTabs(Settings &s) {
                 check("mod_fluid_sounds","FluidWeapons SFX add-on",&s.fluidSounds,"Toggle the enhanced weapon sounds independently. Applies immediately."),
                 check("mod_fluid_monsters","FluidMonsters",&s.fluidMonsters,"Toggle smooth monster walking. Applies immediately; demos keep original movement.")}}}},
         {"Fluid Weapons",{
+            {"Smoke and details",{
+                check("fluid_firing_smoke","Muzzle smoke",&s.fluidFiringSmoke,"Original smoke artwork after shots."),
+                check("fluid_reload_smoke","Reload smoke",&s.fluidReloadSmoke,"Smoke from shotgun chambers and open super-shotgun barrels."),
+                check("fluid_hot_smoke","Hot barrel smoke",&s.fluidHotSmoke,"Lingering wisps after sustained fire."),
+                slider("fluid_smoke_duration","Barrel fume duration",&s.fluidSmokeDuration,1,5,.5,
+                    "Scales heat gained per shot. Default 2x; shotgun heat is capped to prevent prolonged fumes after repeated shots. Does not enlarge particles.",
+                    [](const Settings &d){return d.fluidWeapons&&d.fluidHotSmoke;}),
+                check("fluid_smoke_bio","Original Bio smoke texture",&s.fluidSmokeBio,"Fluid Weapons optional flowing smoke texture."),
+                check("fluid_indoor_smoke","Indoor smoke buildup",&s.fluidIndoorSmoke,"Lingering indoor smoke. Repeated rocket explosions build a haze that clears over time."),
+                check("fluid_saw_smoke","Chainsaw exhaust",&s.fluidSawSmoke,"Exhaust smoke while the chainsaw runs."),
+                check("fluid_saw_blood","Chainsaw blade blood",&s.fluidSawBlood,"Blood on the blade after cutting a bleeding enemy. Fades over time."),
+                check("fluid_idle_gestures","Idle gestures",&s.fluidIdleGestures,"Original weapon idle gestures.")}},
             {"Rocket launcher",{
                 choice("fluid_rocket_fire","Rocket fire effect",&s.fluidRocketFire,
                     {"Soft glow","Grainy fire"},{0,1},
@@ -492,7 +513,7 @@ std::vector<OptionTab> optionTabs(Settings &s) {
                     [](const Settings &d){return d.emissive!=0&&d.bakeOnlyLights==0;})}}}}};
     for(auto &tab:tabs)for(auto &section:tab.sections)for(auto &option:section.options) {
         std::string key=option.key;
-        if(key=="fluid_rocket_fire"||key=="fluid_bare_hands"||key=="fluid_fast_pistol"||key=="fluid_gloves")
+        if(key=="fluid_firing_smoke"||key=="fluid_reload_smoke"||key=="fluid_hot_smoke"||key=="fluid_indoor_smoke"||key=="fluid_saw_smoke"||key=="fluid_saw_blood"||key=="fluid_idle_gestures"||key=="fluid_rocket_fire"||key=="fluid_bare_hands"||key=="fluid_fast_pistol"||key=="fluid_gloves")
             option.enabled=[](const Settings &d){return d.fluidWeapons!=0;};
         if(key.find("fluid_glove_")==0||key.find("fluid_shade_")==0)
             option.enabled=[](const Settings &d){return d.fluidWeapons&&d.fluidGloves==7;};

@@ -6,6 +6,29 @@ namespace doom3d {
 // Their artwork is generated per WAD from the BLUD sprite's own palette
 // indices, ordered dark to bright by how often each is used: one pool shape,
 // four splat shapes, three specks, a drip run and a smear.
+int bloodSourceTint=0;
+int monsterBloodTint(const mobj_t *thing) {
+    if(!thing)return 0;
+    return thing->type==MT_HEAD?1:(thing->type==MT_BRUISER||thing->type==MT_KNIGHT)?2:0;
+}
+static byte bloodTintIndex(byte index,int tint) {
+    if(!tint)return index;
+    const byte *pal=(const byte*)W_CacheLumpName((char*)"PLAYPAL",PU_CACHE);
+    static std::array<std::array<byte,256>,2> tables;
+    static std::array<byte,768> previous{};
+    static bool ready=false;
+    if(!ready||!std::equal(previous.begin(),previous.end(),pal)){
+        std::copy_n(pal,768,previous.begin());ready=true;
+        for(int kind=0;kind<2;++kind)for(int i=0;i<256;++i){
+            float intensity=std::max({pal[i*3],pal[i*3+1],pal[i*3+2]});
+            std::array<float,3> color=kind==0?std::array<float,3>{.1f,.1f,1.f}:std::array<float,3>{.16f,1.f,.29f};
+            float best=1e9f;int match=0;
+            for(int j=0;j<256;++j){float d=0;for(int k=0;k<3;++k){float delta=pal[j*3+k]-intensity*color[k];d+=delta*delta;}if(d<best){best=d;match=j;}}
+            tables[kind][i]=byte(match);
+        }
+    }
+    return tables[std::clamp(tint,1,2)-1][index];
+}
 constexpr int bloodKeyBase=-0x40000000; // Image keys clear of walls and lumps.
 constexpr int bloodPool=0,bloodSplats=4,bloodSpeckFirst=1+bloodSplats,bloodSpecks=3,bloodDrip=bloodSpeckFirst+bloodSpecks,bloodSmear=bloodDrip+1;
 static std::vector<byte> bloodShades;static bool bloodShadesLoaded=false;
@@ -35,12 +58,22 @@ static byte bloodIndex(float shade) {
 }
 std::array<float,3> bloodColor(float shade) {
     if(bloodPalette().empty())return {0.5f,0,0};
-    const byte *rgb=(const byte*)W_CacheLumpName((char*)"PLAYPAL",PU_CACHE)+bloodIndex(shade)*3;
+    const byte *rgb=(const byte*)W_CacheLumpName((char*)"PLAYPAL",PU_CACHE)+bloodTintIndex(bloodIndex(shade),bloodSourceTint)*3;
     return {rgb[0]/255.0f,rgb[1]/255.0f,rgb[2]/255.0f};
+}
+Image &bloodSpriteImage(int lump,int tint,int &key) {
+    key=-1-lump;
+    if(!tint)return lumpImage(lump,false);
+    key=-15000000-lump*3-std::clamp(tint,1,2);
+    auto found=images.find(key);if(found!=images.end())return found->second;
+    const auto &source=lumpImage(lump,false);auto pixels=source.pixels;
+    for(size_t i=0;i<pixels.size();i+=2)pixels[i]=bloodTintIndex(pixels[i],tint);
+    return images.emplace(key,upload(source.width,source.height,pixels.data(),source.left,source.top)).first->second;
 }
 static Image &bloodImage(int variant) {
     int key=bloodKeyBase+variant;
     auto found=images.find(key);if(found!=images.end())return found->second;
+    int tint=variant/32;variant%=32;
     uint32_t seed=hash32(variant*7919u+17u);
     int width=variant==bloodPool?64:variant==bloodDrip?3:variant==bloodSmear?32:variant>=bloodSpeckFirst?8:32;
     int height=variant==bloodDrip?40:variant==bloodSmear?16:width;
@@ -48,7 +81,7 @@ static Image &bloodImage(int variant) {
     auto put=[&](int x,int y,float shade) {
         if(x<0||y<0||x>=width||y>=height)return;
         size_t i=((size_t)y*width+x)*2;
-        pixels[i]=bloodIndex(shade);pixels[i+1]=255;
+        pixels[i]=bloodTintIndex(bloodIndex(shade),tint);pixels[i+1]=255;
     };
     if(variant==bloodDrip) {
         // A run one texel wide down to a bead three wide: drawn from the
@@ -111,7 +144,7 @@ static int variantOf(int kind) {
 }
 struct BloodFloor { float x,y,born,size,angle,stretch;int sector,variant;bool flip,ceiling; };
 struct BloodWall { int line,side,section;float along,dz,born,size,stretch;int variant;bool flip;int drips;float dripU[2],dripLength[2]; };
-struct BloodPool { float x,y,born,size,angle;int sector; };
+struct BloodPool { float x,y,born,size,angle;int sector,tint; };
 static std::vector<BloodFloor> bloodFloors;static std::vector<BloodWall> bloodWalls;static std::vector<BloodPool> bloodPools;
 static std::unordered_map<const mobj_t*,bool> pooledCorpses;
 static unsigned bloodLevelSerial;
@@ -124,7 +157,7 @@ void bloodFloorSplat(float x,float y,int sector,float size,float angle,float str
     if(!bloodOn()||sector<0||sector>=numsectors)return;
     checkBloodLevel();
     if(bloodFloors.size()>=maxFloorBlood)bloodFloors.erase(bloodFloors.begin());
-    bloodFloors.push_back({x,y,born,size,angle,std::max(1.0f,stretch),sector,variantOf(kind),kind!=BLOOD_SMEAR&&randomRange(0,1)<0.5f,ceiling});
+    bloodFloors.push_back({x,y,born,size,angle,std::max(1.0f,stretch),sector,variantOf(kind)+32*bloodSourceTint,kind!=BLOOD_SMEAR&&randomRange(0,1)<0.5f,ceiling});
 }
 void bloodWallSplat(const WallHit &hit,float x,float y,float z,float size,float stretch,float born,int kind,bool drips) {
     if(!bloodOn())return;
@@ -134,7 +167,7 @@ void bloodWallSplat(const WallHit &hit,float x,float y,float z,float size,float 
     if(z<span.bottom||z>span.top)return;
     float along=std::clamp(((x-span.a.x)*ex+(y-span.a.y)*ey)/len,0.0f,len);
     if(bloodWalls.size()>=maxWallBlood)bloodWalls.erase(bloodWalls.begin());
-    BloodWall wall={hit.line,hit.side,hit.section,along,z-span.anchor,born,size,std::max(1.0f,stretch),variantOf(kind),randomRange(0,1)<0.5f,0,{},{}};
+    BloodWall wall={hit.line,hit.side,hit.section,along,z-span.anchor,born,size,std::max(1.0f,stretch),variantOf(kind)+32*bloodSourceTint,randomRange(0,1)<0.5f,0,{},{}};
     // Runs from a heavy splat: one or two, down from its lower half.
     if(drips) {
         wall.drips=1+(randomRange(0,1)<0.4f);
@@ -165,6 +198,7 @@ static void placeSplats(float x,float y,float z,float dx,float dy,int damage) {
     bloodWallSplat(hit,x+dx*hit.t,y+dy*hit.t,sz,randomRange(16,26),1,now+hit.t/400,BLOOD_SPLAT,false);
 }
 void bloodHit(mobj_t *target,mobj_t *shooter,fixed_t fx,fixed_t fy,fixed_t fz,fixed_t fdx,fixed_t fdy,fixed_t slope,int damage) {
+    BloodSourceScope bloodSource(target);
     shotThrough(target,fx,fy,fz,fdx,fdy,damage);
     bodyHit(target,fx,fy,fz,fdx,fdy,damage);
     woundHit(target,fx,fy,fz,fdx,fdy,slope,damage,shooter);
@@ -246,7 +280,7 @@ void buildBlood(const Uniforms &camera) {
         if(thing->z>thing->floorz||thing->momx||thing->momy||sectors[i].floorpic==skyflatnum)continue;
         pooledCorpses[thing]=true;
         if(bloodPools.size()>=64)bloodPools.erase(bloodPools.begin());
-        bloodPools.push_back({units(thing->x),units(thing->y),now,std::clamp(units(thing->radius)*2.4f,28.0f,64.0f),randomRange(0,2*doomPi),i});
+        bloodPools.push_back({units(thing->x),units(thing->y),now,std::clamp(units(thing->radius)*2.4f,28.0f,64.0f),randomRange(0,2*doomPi),i,monsterBloodTint(thing)});
     }
     for(auto it=pooledCorpses.begin();it!=pooledCorpses.end();) it=it->second?std::next(it):pooledCorpses.erase(it);
     for(const auto &pool:bloodPools) {
@@ -256,7 +290,7 @@ void buildBlood(const Uniforms &camera) {
         float wet,dark;bloodAge(age,4,6,wet,dark);
         float spread,wash=rainWash(rainedOn(pool.sector,pool.x,pool.y),age,dark,spread);
         if(wash<0)continue;
-        flatBlood(bloodPool,pool.sector,pool.x,pool.y,pool.size*grow*spread,pool.angle,1,false,false,wet,dark,wash,camera);
+        flatBlood(bloodPool+32*pool.tint,pool.sector,pool.x,pool.y,pool.size*grow*spread,pool.angle,1,false,false,wet,dark,wash,camera);
     }
     bloodFloors.erase(std::remove_if(bloodFloors.begin(),bloodFloors.end(),[&](const BloodFloor &d){return now-d.born>180;}),bloodFloors.end());
     for(const auto &d:bloodFloors) {
@@ -298,7 +332,7 @@ void buildBlood(const Uniforms &camera) {
              vertex(u1,z0,texU(u1),texV(z0)),vertex(u0,z0,texU(u0),texV(z0)));
         // Drips run down from the splat's lower half over three seconds,
         // slowing, in four-tic steps: the bead leads, the run follows.
-        const Image &drip=bloodImage(bloodDrip);
+        const Image &drip=bloodImage(bloodDrip+(d.variant/32)*32);
         for(int n=0;n<d.drips;++n) {
             float age=std::floor((now-d.born-0.3f)*TICRATE/4)*4/TICRATE;
             if(age<=0)continue;
@@ -306,7 +340,7 @@ void buildBlood(const Uniforms &camera) {
             float top=zc-h*0.35f,bottom=std::max(span.bottom,top-length);
             if(length<1||top<=bottom||u<0.5f||u>len-1.5f)continue;
             float shown=std::min((float)drip.height,top-bottom);
-            quad(batches[bloodKeyBase+bloodDrip],vertex(u,top,0,drip.height-shown),vertex(u+drip.width,top,(float)drip.width,drip.height-shown),
+            quad(batches[bloodKeyBase+bloodDrip+(d.variant/32)*32],vertex(u,top,0,drip.height-shown),vertex(u+drip.width,top,(float)drip.width,drip.height-shown),
                  vertex(u+drip.width,bottom,(float)drip.width,(float)drip.height),vertex(u,bottom,0,(float)drip.height));
         }
     }

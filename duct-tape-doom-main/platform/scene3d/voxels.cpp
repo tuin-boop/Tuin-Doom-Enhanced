@@ -73,7 +73,15 @@ bool drawVoxel(std::map<int,std::vector<Vertex>> &out,const mobj_t &thing,int sp
  try {
   Entry &entry=found->second;loadModel(entry);ensureTexture(entry);const auto &m=*entry.model;
   float angle=float(facing*(2.0*doomPi/4294967296.0))+(entry.angle+90)*doomPi/180;
-  float cs=std::cos(angle),sn=std::sin(angle);auto &vertices=out[entry.key];
+  int imageKey=entry.key;
+  if(thing.player&&((thing.flags&MF_TRANSLATION)>>MF_TRANSSHIFT)){
+   imageKey=-20000000+entry.key*4-((thing.flags&MF_TRANSLATION)>>MF_TRANSSHIFT);
+   if(!images.count(imageKey)){
+   std::vector<byte> normals(m.texels.size());for(size_t i=0;i<normals.size();i+=2)normals[i]=normals[i+1]=m.texels[i+1]?255:128;
+   playerColourImage(images.at(entry.key),entry.key,(thing.flags&MF_TRANSLATION)>>MF_TRANSSHIFT,imageKey,normals.data());
+   }
+  }
+  float cs=std::cos(angle),sn=std::sin(angle);auto &vertices=out[imageKey];
   unsigned mode=MODE_SPRITE|MODE_VOXEL|(thing.flags&MF_SHADOW?MODE_FUZZ:0);
   bool full=frame&FF_FULLBRIGHT;if(!full)mode|=MODE_RELIT;
   bool eyes=settings.glowingEyes&&settings.voxelEyes&&(thing.flags&MF_COUNTKILL)&&thing.health>0;

@@ -127,6 +127,9 @@ void interpolatedPosition(const mobj_t &thing,float fraction,float &x,float &y,f
 void snapshotWeaponPositions();
 void fluidWeaponShot(mobj_t *origin,int weapon,int flash);
 void fluidWeaponAttack(player_t *player);
+void fluidSawHit(player_t *player,mobj_t *victim);
+void fluidIndoorSmoke(mobj_t *source,int weapon);
+void fluidBarrelSmoke(player_t *player,int stream,float x,float y,float scale,float alpha,float speed,float fire);
 void fluidWeaponAux(int alt,int reload);
 void resetWeaponPositions();
 
@@ -453,6 +456,17 @@ const std::vector<byte> &bloodPalette();
 // Blood shown at all: switched on, in a level, the WAD's blood sprite found.
 bool bloodOn();
 // A blood shade (0 dark - 1 bright) of the blood sprite, unlit.
+// Scoped source for synchronous blood creation. Marks store their colour;
+// no actor pointers survive in particles or decals.
+int monsterBloodTint(const mobj_t *thing);
+Image &playerColourImage(Image &,int,int,int &,const byte *voxelNormals=nullptr);
+Image &bloodSpriteImage(int lump,int tint,int &key);
+extern int bloodSourceTint;
+struct BloodSourceScope {
+    int previous;
+    explicit BloodSourceScope(const mobj_t *thing):previous(bloodSourceTint){bloodSourceTint=monsterBloodTint(thing);}
+    ~BloodSourceScope(){bloodSourceTint=previous;}
+};
 std::array<float,3> bloodColor(float shade);
 void bloodHit(mobj_t *target,mobj_t *shooter,fixed_t fx,fixed_t fy,fixed_t fz,fixed_t fdx,fixed_t fdy,fixed_t slope,int damage);
 void buildBlood(const Uniforms &camera);
@@ -601,6 +615,7 @@ std::array<float,3> rubbleSurfaceColor(float x,float y,float z);
 void surfaceChip(float x,float y,float z,float nx,float ny,float nz);
 void rubbleImpact(int type,float x,float y,float z,float nx,float ny,float nz);
 void solidBulletImpact(float x,float y,float z,float nx,float ny,float nz);
+int rocketDoorImpact(mobj_t *mo);
 void doorDamage(line_t *line,int side,fixed_t x,fixed_t y,fixed_t z,int broken);
 // A body come down at (x,y) in a liquid: rings, and a plunge as hard as its fall (units a tic) and mass.
 // False when not over a liquid.
@@ -715,6 +730,6 @@ inline float decalLift(float x,float y,const Uniforms &camera) {return 0.15f+std
 // What flow was baked from: decoration shadows, and 2 with window light,
 // which brings the outdoor light in itself, so flow then skips sky sectors.
 inline int flowInputs() {return bakeThingsKey+(settings.windowLight&&settings.bakedLights?2:0);}
+void fluidFiringSmoke(player_t*,int,float,float,float,float,float);
 } // namespace doom3d
 #endif
-

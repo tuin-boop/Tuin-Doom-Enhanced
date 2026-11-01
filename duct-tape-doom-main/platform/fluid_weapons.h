@@ -5,6 +5,8 @@
 #include <vector>
 #include <cstdint>
 namespace doomfluid {
+struct FireEmitter {int weapon; float x,y,power,rotation,offset;};
+struct BarrelEmitter {int stream; float x,y,scale,alpha,speed; float fire=0;};
 struct Layer {
     std::string sprite;
     doomweapon::Transform transform;
@@ -14,11 +16,34 @@ struct Layer {
     bool flipX=false;
     bool mirror=false;
     bool addWeapon=true;
+    int bloodTint=-1;
 };
 // Native port of MR's overlay animation arithmetic. This deliberately lives
 // outside the Doom simulation: its random choices cannot change demo RNG.
 class Weapons {
     int weapon=-1,age=-1;
+    bool firingSmoke=false,reloadSmoke=false,hotSmoke=false,sawSmoke=false,sawBlood=false;
+    bool idleGestures=true;
+    int thirdIdleAge=-1;
+    doomweapon::Transform idleHand;
+    doomweapon::Motion idleHandMotion;
+    unsigned smokeClock=0,smokeRandom=0x23dc17;
+    float heat=0,blood=0,rocketHeat=0;
+    struct SawStain {int group,frame,tint;float life;};
+    std::vector<SawStain> sawStains;
+    float smokeDuration=1;
+    float storedHeat[9]={};
+    struct HeatEvent {int weapon,tics;float amount;};
+    std::vector<HeatEvent> heatEvents;
+    std::vector<int> storedBarrels;
+    std::vector<int> hotBarrels;
+    struct Smoke { doomweapon::Transform pose; doomweapon::Motion motion; float vx,vy,alpha,growth,vz=0,fade=.01f; int life,kind; int stream=0; };
+    std::vector<Smoke> smoke;
+    float effectRandom(float low,float high);
+    void emitSmoke(float x,float y,float scale,float alpha,int kind);
+    void tickSmoke();
+    void emitFireSmoke();
+    std::vector<FireEmitter> fireSmoke;
     uint32_t randomState=0x73ad46b1;
     float power=.5f,rotation=0,misalignment=0,recoveryX=0,recoveryY=0,pump=0;
     doomweapon::Transform pose;
@@ -29,12 +54,14 @@ class Weapons {
     int plasmaFrame=0;
     float spin=30,oldSpin=30,spinSpeed=0,gunFrame=0;
     int sawHold=0;
-    bool charging=false;
+    bool charging=false,emptyPistol=false,rocketDontClose=false;
     bool altHeld=false,reloadHeld=false,oldAlt=false,oldReload=false,auxReady=false;
     bool secondGrip=false,secondFist=false,bfgIdle=false,manualReload=false;
     bool alternatePunch=true;
     int auxAction=0,auxAge=-1,gripAge=-1;
     int inspectionHold=-1;
+    doomweapon::Transform gripHand;
+    doomweapon::Motion gripMotion;
     doomweapon::Transform auxHand;
     doomweapon::Motion auxHandMotion;
     doomweapon::Transform bumpHand;
@@ -51,6 +78,8 @@ class Weapons {
     void tickShells();
     int shotgunCatchAge=-1,shotgunReturnWait=0;
     int ssgCatchAge=-1;
+    int reloadVariant=0;
+    bool reloadSplitHeld=false;
     void superShotgunCatch();
     doomweapon::Transform shotgunCatchHand;
     doomweapon::Motion shotgunCatchMotion;
@@ -79,15 +108,23 @@ class Weapons {
     void auxiliary();
     std::vector<Layer> baseLayers(float fraction,bool bareHands) const;
 public:
+    std::vector<BarrelEmitter> barrelEmitters() const;
+    void effects(bool firing,bool reload,bool hot,bool saw,bool bloody,bool idle=true);
+    void barrelSmokeDuration(float multiplier);
+    void sawHit(int tint=0);
+    std::vector<Layer> smokeLayers(float fraction) const;
     void movement(float yaw,float pitch,float bob,float vz,bool inAir,bool moving,int time){movementActive=true;yawInput=yaw;viewPitch=pitch;moveBob=bob;verticalSpeed=vz;airborne=inAir;walking=moving;moveTime=time;}
     void punchDirection(float yaw,float side){yawInput=yaw;sideInput=side;}
     void input(bool alt,bool reload,bool ready=true){altHeld=alt;reloadHeld=reload;auxReady=ready;}
     const char* ambientSound()const{return weapon==3&&std::abs(spinSpeed)>.1f?"ChaingunSpin":weapon==6&&bfgIdle?"BFGCharge":"";}
     float ambientLevel()const{return weapon==3?std::clamp(std::abs(spinSpeed)/30.f,0.f,1.f):1.f;}
     void reset(int weapon);
+    void switchWeapon(int weapon);
+    std::vector<FireEmitter> takeFireSmoke(){auto out=std::move(fireSmoke);fireSmoke.clear();return out;}
     void adoptSwitchPose(const std::vector<Layer>& layers);
     void shot(int weapon,float shotPower=.5f);
     void attack(int weapon);
+    void ammoEmpty(bool empty){if(weapon==1)emptyPistol=empty;}
     void tick(int weapon);
     std::vector<Layer> layers(float fraction, bool bareHands=true) const;
     std::vector<std::string> takeSounds();

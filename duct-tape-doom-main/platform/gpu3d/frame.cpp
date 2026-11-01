@@ -1,4 +1,6 @@
+extern "C" {extern int r_photoactive,r_photodof,r_photostyle;extern float r_photofocus;}
 extern "C" int Menu_BrandOpen(void);
+extern "C" float I_PhotoFlash(void);
 /* One frame: the scene prepared by prepareFrame drawn in passes (liquid and
    glass reflections, depth for the mist, the main view with mist and overlays,
    bloom), then presented with the HUD and the settings panel. */
@@ -24,8 +26,10 @@ static void present(SDL_GPUCommandBuffer *command,SDL_GPUTexture *target,const F
     float hudRect[8]={view.uiX/width,view.uiY/height,view.uiWidth/width,view.uiHeight/height,settings.hudLayout==1?0.f:1.f,0,0,0};
     SDL_PushGPUFragmentUniformData(command,0,hudRect,sizeof(hudRect));
     SDL_PushGPUFragmentUniformData(command,1,&view.camera,sizeof(view.camera));
-    SDL_GPUTextureSamplerBinding samplers[]={{colorTexture,linearClamp},{bloomTexture,linearClamp},{hudTexture,linearClamp},{paletteLUT,nearestClamp}};
-    SDL_BindGPUFragmentSamplers(pass,0,samplers,4);
+    float photo[8]={(float)r_photoactive,(float)r_photodof,r_photofocus,(float)r_photostyle,I_PhotoFlash(),0,0,0};
+    SDL_PushGPUFragmentUniformData(command,2,photo,sizeof(photo));
+    SDL_GPUTextureSamplerBinding samplers[]={{colorTexture,linearClamp},{bloomTexture,linearClamp},{hudTexture,linearClamp},{paletteLUT,nearestClamp},{sampleCount!=SDL_GPU_SAMPLECOUNT_1?sceneDepth:depthTexture,nearestClamp}};
+    SDL_BindGPUFragmentSamplers(pass,0,samplers,5);
     SDL_DrawGPUPrimitives(pass,3,1,0,0);
     if(!toastyQuad.empty() && toastyTexture) {
         SDL_BindGPUGraphicsPipeline(pass,settingsPipeline);
@@ -301,7 +305,7 @@ static void drawMainView(SDL_GPUCommandBuffer *render,const FrameView &view,cons
     color.resolve_texture=msaa&&!drawMist?colorTexture:nullptr;
     SDL_GPUDepthStencilTargetInfo depth={};
     depth.texture=depthTexture;depth.clear_depth=1;depth.load_op=SDL_GPU_LOADOP_CLEAR;
-    depth.store_op=drawMist&&!msaa?SDL_GPU_STOREOP_STORE:SDL_GPU_STOREOP_DONT_CARE;
+    depth.store_op=(drawMist||r_photoactive)&&!msaa?SDL_GPU_STOREOP_STORE:SDL_GPU_STOREOP_DONT_CARE;
     depth.stencil_load_op=SDL_GPU_LOADOP_DONT_CARE;depth.stencil_store_op=SDL_GPU_STOREOP_DONT_CARE;
     SDL_GPURenderPass *pass=SDL_BeginGPURenderPass(render,&color,1,&depth);
     pushWorldUniforms(render,camera);
@@ -507,7 +511,7 @@ void I_Render3DPresent(const unsigned *pixels,const unsigned *palette) {
     drawReflection(render,view,camera);
     captureGlassProbes(render,camera);
     glassReflected=drawGlassReflection(render,view,camera);
-    if(drawMist&&msaa)drawMistDepth(render,view,camera);
+    if((drawMist||r_photoactive)&&msaa)drawMistDepth(render,view,camera);
     drawMainView(render,view,camera,drawMist,msaa,weapons,hud,cross);
     if(camera.materials[1]>0)drawBloom(render,view,camera,weapons);
     stage(3);

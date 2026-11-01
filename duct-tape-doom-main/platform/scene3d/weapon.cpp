@@ -11,6 +11,7 @@
 extern "C" int I_StartNamedSound(const char*,int,int,int,int);
 extern "C" {
 #include "d_items.h"
+int P_FluidShotDamage(void);
 #include "p_fluid.h"
 #include "i_sound.h"
 }
@@ -51,14 +52,25 @@ static void initializeFluidTextures() {
 }
 void fluidWeaponShot(mobj_t*origin,int weapon,int flash) {
     muzzleFlash(origin,weapon,flash);
+    if(fluidEnabled())fluidIndoorSmoke(origin,weapon);
     if(weapon==wp_missile)fluidRocketLaunch(origin);
-    if(fluidEnabled()&&origin==players[displayplayer].mo)fluidAnimation.shot(weapon);
+    if(fluidEnabled()&&origin==players[displayplayer].mo){
+        float strength=.5f;int damage=P_FluidShotDamage();
+        if(weapon==wp_pistol||weapon==wp_chaingun)strength=(damage-5)/10.f;
+        else if(weapon==wp_shotgun)strength=(damage-35)/65.f;
+        else if(weapon==wp_supershotgun)strength=(damage-145)/110.f;
+        fluidAnimation.shot(weapon,strength);
+        if(weapon==wp_pistol)fluidAnimation.ammoEmpty(players[displayplayer].ammo[am_clip]==0);
+    }
 }
 void fluidWeaponAttack(player_t*player) {
     if(fluidEnabled()&&player==&players[displayplayer]){
         fluidAnimation.punchDirection(player->cmd.angleturn,player->cmd.sidemove);
         fluidAnimation.attack((int)player->readyweapon);
     }
+}
+void fluidSawHit(player_t*player,mobj_t*victim){
+    if(fluidEnabled()&&player==&players[displayplayer]&&victim&&!(victim->flags&MF_NOBLOOD)&&victim->type!=MT_SKULL)fluidAnimation.sawHit(victim->type==MT_HEAD?1:(victim->type==MT_BRUISER||victim->type==MT_KNIGHT)?2:0);
 }
 static std::array<doomweapon::Motion,NUMPSPRITES> weaponMotion;
 static std::array<bool,NUMPSPRITES> weaponWasActive={};
@@ -74,7 +86,13 @@ void resetWeaponPositions() {
 void snapshotWeaponPositions() {
     const player_t &player=players[displayplayer];
     bool changed=weaponPlayer!=displayplayer||weaponType!=(int)player.readyweapon;
-    if(changed)resetWeaponPositions();
+    if(changed){
+        // Player/level resets discard heat; a normal weapon switch preserves it.
+        if(weaponPlayer==displayplayer&&weaponType>=0){
+            for(auto &motion:weaponMotion)motion.reset();weaponWasActive.fill(false);
+            fluidAnimation.switchWeapon((int)player.readyweapon);fluidSwitch.reset();
+        }else resetWeaponPositions();
+    }
     weaponPlayer=displayplayer;weaponType=(int)player.readyweapon;
     if(fluidEnabled()) {
         if(changed){
@@ -83,6 +101,9 @@ void snapshotWeaponPositions() {
             if(weaponType>=0&&weaponType<NUMWEAPONS&&weaponType!=wp_chainsaw)playFluidSound(select[weaponType]);
         }
         bool ready=player.health>0&&player.pendingweapon==wp_nochange&&player.psprites[ps_weapon].state==&states[weaponinfo[weaponType].readystate];
+        fluidAnimation.effects(settings.fluidFiringSmoke,settings.fluidReloadSmoke,settings.fluidHotSmoke,
+            settings.fluidSawSmoke,settings.fluidSawBlood,settings.fluidIdleGestures);
+        fluidAnimation.barrelSmokeDuration(settings.fluidSmokeDuration);
         fluidAnimation.input(fluidAlt,fluidReload,ready);
         fluidAnimation.movement(player.cmd.angleturn,tourpitch,units(player.bob),units(player.mo->momz),player.mo->z>player.mo->floorz,player.cmd.forwardmove||player.cmd.sidemove,leveltime);
         fluidAnimation.tick(weaponType);
@@ -94,6 +115,9 @@ void snapshotWeaponPositions() {
         fluidSwitch.tick(weaponType,switchPhase,player.health<=0||
             (!switchPhase&&(state!=&states[weaponinfo[weaponType].readystate]||fluidAlt||fluidReload)));
         if(wasSwitching&&!fluidSwitch.active())fluidAnimation.adoptSwitchPose(switchEnd);
+        if(!fluidSwitch.active()&&player.health>0)
+            for(const auto&e:fluidAnimation.barrelEmitters())fluidBarrelSmoke(&players[displayplayer],e.stream,e.x,e.y,e.scale,e.alpha,e.speed,e.fire);
+        for(const auto&e:fluidAnimation.takeFireSmoke())fluidFiringSmoke(&players[displayplayer],e.weapon,e.x,e.y,e.power,e.rotation,e.offset);
         for(const auto&event:fluidAnimation.takeSounds())playFluidSound(event);
         std::string ambient=player.health>0?fluidAnimation.ambientSound():"";
         int ambientVolume=int(40*fluidAnimation.ambientLevel());
@@ -152,7 +176,7 @@ static Image &pickupHandImage(int card,bool relit){
     return relit?relitWeaponImage(key-100,found->second):found->second;
 }
 static Image &weaponImage(int lump) {return relitWeaponImage(INT_MIN/2-lump,lumpImage(lump,false));}
-static Image &fluidImage(const std::string&name,bool relit) try {
+static Image &fluidImage(const std::string&name,bool relit,int bloodTint=-1) try {
     static std::array<float,7> gloveSettings{};
     std::array<float,7> current={(float)settings.fluidGloves,settings.fluidGloveRed,settings.fluidGloveGreen,settings.fluidGloveBlue,settings.fluidShadeRed,settings.fluidShadeGreen,settings.fluidShadeBlue};
     if(current!=gloveSettings) {
@@ -160,8 +184,9 @@ static Image &fluidImage(const std::string&name,bool relit) try {
         for(const auto&entry:fluidImageKeys){images.erase(entry.second);images.erase(entry.second-100000);}
         gloveSettings=current;
     }
-    auto found=fluidImageKeys.find(name);
-    int key=found==fluidImageKeys.end()?fluidImageKeys.emplace(name,-2000000-(int)fluidImageKeys.size()).first->second:found->second;
+    const std::string cacheName=name+(bloodTint>=0?"#"+std::to_string(bloodTint):"");
+    auto found=fluidImageKeys.find(cacheName);
+    int key=found==fluidImageKeys.end()?fluidImageKeys.emplace(cacheName,-2000000-(int)fluidImageKeys.size()).first->second:found->second;
     auto cached=images.find(key);
     if(cached==images.end()) {
         const auto&source=fluidTextures->image(name);
@@ -172,6 +197,19 @@ static Image &fluidImage(const std::string&name,bool relit) try {
             auto table=doomfluid::gloveTranslation((const byte*)W_CacheLumpName((char*)"PLAYPAL",PU_CACHE),settings.fluidGloves,pistolPalette,
                 {settings.fluidShadeRed,settings.fluidShadeGreen,settings.fluidShadeBlue},
                 {settings.fluidGloveRed,settings.fluidGloveGreen,settings.fluidGloveBlue});
+            for(size_t p=0;p<pixels.size();p+=2)pixels[p]=table[pixels[p]];
+        }
+        // The source blood overlays are grayscale masks with MRIntWBldRed applied.
+        if(name.size()==6 && name.rfind("SA",0)==0 && name[2]>='B' && name[2]<='F' && (name[3]>='1'&&name[3]<='4')) {
+            const byte *pal=(const byte*)W_CacheLumpName((char*)"PLAYPAL",PU_CACHE);
+            std::array<byte,256> table{};
+            for(int i=0;i<256;++i){
+                float luminance=pal[i*3]*.3f+pal[i*3+1]*.59f+pal[i*3+2]*.11f;
+                const std::array<float,3> tint=bloodTint==1?std::array<float,3>{.1f,.1f,1.1f}:bloodTint==2?std::array<float,3>{.16f,1.f,.29f}:std::array<float,3>{.5f,0,0};
+                float best=1e9f;int match=0;
+                for(int j=0;j<256;++j){float d=0;for(int k=0;k<3;++k){float delta=pal[j*3+k]-std::min(255.f,luminance*tint[k]);d+=delta*delta;}if(d<best){best=d;match=j;}}
+                table[i]=byte(match);
+            }
             for(size_t p=0;p<pixels.size();p+=2)pixels[p]=table[pixels[p]];
         }
         int left=0,top=0,right=source.width,bottom=source.height;
@@ -287,6 +325,9 @@ std::vector<SpriteDraw> weaponDraws(const Uniforms &camera) {
         // Invisible control frames must not fall back to vanilla artwork.
         if(fluid.empty())return {};
     }
+    if(fluidEnabled()&&player->health>0&&!fluidSwitch.active()){
+        auto smoke=fluidAnimation.smokeLayers(renderFraction);fluid.insert(fluid.end(),smoke.begin(),smoke.end());
+    }
     if(settings.weaponLighting&&camera.effects[2]==0&&player->mo)updateWeaponProbe(camera,player->mo->subsector->sector);
     for(int i=0;i<(fluid.empty()?NUMPSPRITES:(int)fluid.size());++i) {
         bool modded=!fluid.empty();
@@ -302,7 +343,7 @@ std::vector<SpriteDraw> weaponDraws(const Uniforms &camera) {
         // the normal sprite path still applies sector and dynamic world light.
         bool relit=settings.weaponLighting&&!bright&&!modded;
         int lump=firstspritelump+sf.lump[0];
-        Image &image=modded?fluidImage(fluid[i].sprite,relit):(relit?weaponImage(lump):lumpImage(lump,false));
+        Image &image=modded?fluidImage(fluid[i].sprite,relit,fluid[i].bloodTint):(relit?weaponImage(lump):lumpImage(lump,false));
         doomweapon::Transform position;position.x=units(psp.sx);position.y=units(psp.sy);
         // Opt-in while the Fluid Weapons runtime is being ported. Only the
         // visual position changes; state timing, firing and ammo stay in C.

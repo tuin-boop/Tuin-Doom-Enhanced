@@ -1,3 +1,5 @@
+#include "i_lan.h"
+#include "p_arena.h"
 // Emacs style mode select   -*- C++ -*- 
 //-----------------------------------------------------------------------------
 //
@@ -645,6 +647,7 @@ int		iquetail;
 
 void P_RemoveMobj (mobj_t* mobj)
 {
+    P_ArenaForgetMonster(mobj);
     Arcade_RemoveProjectile(mobj);
     P_TacticsRemove(mobj);
     P_AggressiveRemove(mobj);
@@ -944,7 +947,7 @@ P_SpawnPuff
 //
 // P_SpawnBlood
 // 
-void
+mobj_t*
 P_SpawnBlood
 ( fixed_t	x,
   fixed_t	y,
@@ -965,6 +968,7 @@ P_SpawnBlood
 	P_SetMobjState (th,S_BLOOD2);
     else if (damage < 9)
 	P_SetMobjState (th,S_BLOOD3);
+    return th;
 }
 
 
@@ -1004,6 +1008,7 @@ P_SpawnMissile
     angle_t	an;
     int		dist;
 
+    P_PhotoEvent(1,source);
     mobj_t barrageAim;
     if(P_TacticsAim(source,&barrageAim)||P_AggressiveBarrageAim(source,&barrageAim))dest=&barrageAim;
     if (R_MuzzleFlash) R_MuzzleFlash(source, wp_plasma, type);
@@ -1061,11 +1066,11 @@ P_SpawnPlayerMissile
     
     // Free look follows the crosshair, even if classic auto-aim sees a
     // monster at a different height. Preserve demo/network trajectories.
-    boolean aimed = freeaim && source->player && !demoplayback && !demorecording && !netgame;
+    boolean aimed = source->player && (lan_session ? lan_pitch[source->player-players]!=32767 : freeaim && !demoplayback && !demorecording && !netgame);
     fixed_t horizontal = FRACUNIT;
     an = source->angle;
     if (aimed) {
-        double pitch = fmax(-1.55, fmin(1.55, tourpitch));
+        double pitch = fmax(-1.55, fmin(1.55, lan_session ? lan_pitch[source->player-players]/10000.0 : tourpitch));
         horizontal = (fixed_t)(cos(pitch)*FRACUNIT);
         slope = (fixed_t)(sin(pitch)*FRACUNIT);
     } else {

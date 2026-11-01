@@ -1,3 +1,4 @@
+#include "p_arena.h"
 // Emacs style mode select   -*- C++ -*- 
 //-----------------------------------------------------------------------------
 //
@@ -38,6 +39,24 @@ rcsid[] = "$Id: p_tick.c,v 1.4 1997/02/03 16:47:55 b1 Exp $";
 
 
 int	leveltime;
+int r_photoauto=0,r_photomask=31,r_photoscope=0,r_photoevent=0,r_photocooldown=0;
+mobj_t *r_photoeventsubject=0;
+static unsigned photoEventLevel;
+void P_PhotoEvent(int event,mobj_t *subject){
+    if(photoEventLevel!=r_levelserial){photoEventLevel=r_levelserial;r_photoevent=0;r_photoeventsubject=0;r_photocooldown=0;}
+    if(!r_photoauto||!(r_photomask&event)||r_photoactive||leveltime<r_photocooldown||
+       gamestate!=GS_LEVEL||menuactive||paused||netgame||demorecording||demoplayback||!subject)return;
+    if(event!=8){
+        if(!subject->player&&!(subject->info->flags&MF_COUNTKILL)&&subject->type!=MT_SKULL)return;
+        if((r_photoscope==1&&!subject->player)||(r_photoscope==2&&subject->player))return;
+    }
+    mobj_t *p=players[displayplayer].mo;if(!p)return;
+    double dx=((double)subject->x-p->x)/FRACUNIT,dy=((double)subject->y-p->y)/FRACUNIT;
+    if(dx*dx+dy*dy>2048.0*2048.0)return;
+    /* Prefer deaths/explosions over incidental firing or damage in this tick. */
+    if(event>=r_photoevent){r_photoevent=event;r_photoeventsubject=subject;}
+}
+
 
 //
 // THINKERS
@@ -147,6 +166,15 @@ void P_Ticker (void)
 {
     int		i;
 
+    if(r_photoactive&&!netgame){
+        if(r_photosteps<=0)return;
+        --r_photosteps;
+        /* Advance the world, without replaying held movement/fire commands. */
+        for(i=0;i<MAXPLAYERS;++i)if(playeringame[i]){
+            players[i].cmd.forwardmove=players[i].cmd.sidemove=0;
+            players[i].cmd.angleturn=players[i].cmd.buttons=0;
+        }
+    }
     static unsigned wheelTicks;
     if(!netgame&&!demorecording&&!demoplayback&&!menuactive&&!paused&&R_WheelSlowMotion&&R_WheelSlowMotion()){
         if(++wheelTicks%20)return; /* 5% simulation speed; input/render remain responsive. */
@@ -171,11 +199,13 @@ void P_Ticker (void)
 	if (playeringame[i])
 	    P_PlayerThink (&players[i]);
 			
+    P_ArenaTick();
     SV_Tick();
     P_RunThinkers ();
     P_UpdateSpecials ();
     P_RespawnSpecials ();
 
     // for par times
-    leveltime++;	
+    leveltime++;
+    if(r_photoevent&&!r_photoactive&&r_photoauto)r_photoactive=2; /* Open after the completed simulation tick. */
 }

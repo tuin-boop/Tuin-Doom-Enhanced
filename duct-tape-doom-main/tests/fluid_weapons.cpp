@@ -5,6 +5,67 @@
 #include <set>
 static void check(bool good,const char*message){if(!good)throw std::runtime_error(message);}
 int main(){try{
+    // Repeated shots and pending delayed heat must not restart fumes after
+    // a weapon has spent three seconds holstered, including multiple switches.
+    for(int weapon:{1,2,3,4,8}){
+        doomfluid::Weapons w;w.reset(weapon);w.effects(false,false,true,false,false);
+        w.barrelSmokeDuration(3);
+        for(int i=0;i<30;++i){w.shot(weapon);for(int t=0;t<20;++t)w.tick(weapon);}
+        w.shot(weapon);w.switchWeapon(0);
+        for(int t=0;t<50;++t)w.tick(0);
+        w.switchWeapon(7);
+        for(int t=0;t<56;++t)w.tick(7);
+        w.switchWeapon(weapon);
+        for(int t=0;t<100;++t){w.tick(weapon);check(w.barrelEmitters().empty(),"holstered weapon restarted fumes");}
+    }
+    for(int weapon:{1,2,3,4,8}){
+        int lifetime[2]={};
+        for(int setting=0;setting<2;++setting){
+            doomfluid::Weapons w;w.reset(weapon);w.effects(false,false,true,false,false);
+            w.barrelSmokeDuration(setting?3:1);w.shot(weapon);
+            for(int tic=0;tic<1800;++tic){w.tick(weapon);if(!w.barrelEmitters().empty())lifetime[setting]=tic+1;}
+            check(w.barrelEmitters().empty(),"barrel fumes did not eventually cool away");
+        }
+        std::cout<<"Weapon "<<weapon<<" last fume tic: "<<lifetime[0]<<" (1x), "<<lifetime[1]<<" (3x)\n";
+        check(lifetime[1]>lifetime[0]+5,"duration control did not extend post-shot fumes");
+    }
+    {
+        doomfluid::Weapons w;w.reset(2);w.effects(false,false,true,false,false);
+        w.barrelSmokeDuration(3);
+        for(int shot=0;shot<20;++shot){w.shot(2);for(int t=0;t<35;++t)w.tick(2);}
+        int last=0;
+        for(int t=0;t<350;++t){w.tick(2);if(!w.barrelEmitters().empty())last=t+1;}
+        check(last>35&&last<=158,"repeated shotgun shots accumulated excessive fume duration");
+        std::cout<<"Repeated shotgun shots: emission ends after "<<last/35.f<<" seconds at 3x\n";
+    }
+    {
+        doomfluid::Weapons w;w.reset(2);w.effects(true,true,true,true,true);
+        w.shot(2);check(!w.takeFireSmoke().empty(),"muzzle smoke missing");
+        for(int i=0;i<18;++i)w.tick(2);
+        check(!w.smokeLayers(1).empty(),"shotgun chamber smoke missing");
+        w.effects(false,false,false,false,false);
+        check(w.smokeLayers(1).empty(),"disabled smoke retained");
+        w.reset(1);w.effects(false,false,true,false,false);w.input(false,false,true);
+        for(int i=0;i<8;++i)w.shot(1);
+        for(int i=0;i<55;++i)w.tick(1);
+        for(int i=0;i<6;++i)w.tick(1);auto fumes=w.barrelEmitters();check(fumes.size()==1,"pistol source emitter missing");
+        check(fumes[0].y>1,"smoke omitted weapon baseline");
+        w.reset(3);for(int i=0;i<10;++i){w.shot(3);w.tick(3);}
+        check(w.barrelEmitters().size()==3,"chaingun must track three fired barrels");
+        w.effects(false,false,false,false,false);check(w.barrelEmitters().empty(),"barrel toggle retained emitter");
+        w.reset(7);w.effects(false,false,false,true,true);w.sawHit();
+        bool blood=false;for(auto&l:w.layers(1))if(l.sprite.rfind("SAC1",0)==0&&l.bloodTint==0)blood=true;
+        check(blood,"chainsaw contact blood missing");
+        for(int i=0;i<100;++i)w.tick(7);
+        check(!w.smokeLayers(.5f).empty(),"chainsaw exhaust missing");
+        w.reset(1);check(w.smokeLayers(1).empty(),"smoke leaked across switch/reset");
+        w.effects(true,true,true,true,true);
+        for(int i=0;i<1000;++i){w.shot(1);w.tick(1);check(w.smokeLayers(1).size()<=64,"smoke budget exceeded");}
+        w.effects(false,false,false,false,false);
+        for(int i=0;i<800;++i)w.tick(1);
+        check(w.smokeLayers(1).empty(),"smoke never expired");
+    }
+
     {
         doomfluid::Weapons fists;fists.reset(0);
         fists.attack(0);check(fists.layers(1).back().sprite=="PUN3D0","first punch missing");
@@ -21,6 +82,31 @@ int main(){try{
         check(std::abs(pistol.layers(1)[0].transform.x+4)<.1f,"turn sway never reached the source target");
         pistol.reset(1);pistol.movement(0,0,0,0,false,false,0);pistol.tick(1);
         check(std::abs(pistol.layers(1)[0].transform.x)<.001f,"weapon switch retained turn sway");
+    }
+    {
+        doomfluid::Weapons gun;gun.reset(2);gun.effects(false,false,false,false,false,true);
+        bool sawGesture=false;
+        for(int t=0;t<8000;++t){gun.input(false,false,true);gun.movement(0,0,0,0,false,false,t);gun.tick(2);for(auto&l:gun.layers(.5f)){check(doomweapon::valid(l.transform),"idle hand transform invalid");if(l.sprite=="SH1GZ0"){sawGesture=true;check(gun.layers(.5f).front().sprite=="MRD1H0","idle hand must draw behind shotgun");}}}
+        check(sawGesture,"shotgun supporting-hand idle never played");
+        gun.shot(2);for(auto&l:gun.layers(1))check(l.sprite!="SH1GZ0","shot did not interrupt idle");
+    }
+    {
+        doomfluid::Weapons w;w.reset(1);
+        w.input(false,true);w.tick(1);
+        check(w.layers(1).front().sprite=="MRD1G0","grip approach hand missing behind pistol");
+        w.input(false,false);for(int t=0;t<16;++t)w.tick(1);
+        check(w.layers(1).back().sprite=="P2SGA0","two-handed grip did not settle");
+        w.input(false,true);w.tick(1);
+        check(w.layers(1).front().sprite=="MRD1H0","grip withdrawal vanished immediately");
+        w.input(false,false);for(int t=0;t<5;++t)w.tick(1);
+        check(w.layers(1).front().sprite=="MRD1H0","grip withdrawal cut short");
+        for(int t=0;t<10;++t)w.tick(1);
+        check(w.layers(1).size()==1,"withdrawal never finished");
+        w.reset(7);w.effects(false,false,false,false,true);
+        w.sawHit(1);w.sawHit(2);
+        bool blue=false,green=false;
+        for(auto &l:w.layers(1)){blue|=l.bloodTint==1;green|=l.bloodTint==2;}
+        check(blue&&green,"chainsaw lost independently coloured blood stains");
     }
     std::array<uint8_t,768> palette{};for(int i=0;i<256;++i)palette[i*3]=palette[i*3+1]=palette[i*3+2]=uint8_t(i);
     auto tan=doomfluid::gloveTranslation(palette.data(),0,true);
@@ -199,6 +285,24 @@ int main(){try{
         check(c.ambientLevel()<.025f,"chaingun failed to stop after both buttons released");
         c.input(true,false,true);c.tick(3);c.reset(1);
         check(std::string(c.ambientSound()).empty(),"chaingun spin persisted after switching weapons");
+    }
+    {doomfluid::Weapons w;w.reset(1);w.effects(false,false,true,false,false);for(int i=0;i<25;++i)w.shot(1);
+        for(int i=0;i<6;++i)w.tick(1);const float before=w.barrelEmitters()[0].alpha;w.switchWeapon(2);for(int i=0;i<20;++i)w.tick(2);w.switchWeapon(1);
+        check(!w.barrelEmitters().empty(),"holstering lost retained heat");check(w.barrelEmitters()[0].alpha<before,"holstered weapon did not cool");
+        w.reset(1);check(w.barrelEmitters().empty(),"new game retained old heat");}
+    {doomfluid::Weapons w;w.reset(2);w.effects(false,false,true,false,false);w.shot(2);check(w.barrelEmitters().empty(),"shotgun heat must wait for pump stage");for(int i=0;i<30;++i)w.tick(2);check(!w.barrelEmitters().empty(),"shotgun fumes cooled away before pump completed");}
+    {doomfluid::Weapons s;s.reset(8);std::set<int> openingLengths;
+        for(int shot=0;shot<40;++shot){s.shot(8);int d=0,j=0;
+            for(int tic=0;tic<90;++tic){auto layers=s.layers(1);if(layers.front().sprite=="SH12D0")++d;if(layers.front().sprite=="SH12J0")++j;s.tick(8);}
+            openingLengths.insert(d);check(d+j==13,"SSG variant changed total opening duration");
+        }check(openingLengths.size()==2,"SSG randomized reload branch never selected");}
+    {doomfluid::Weapons w;w.reset(1);w.shot(1);w.ammoEmpty(true);for(int i=0;i<20;++i)w.tick(1);check(w.layers(1)[0].sprite=="P1SGC0","empty pistol slide did not stay open");}
+    {doomfluid::Weapons w;w.reset(2);w.effects(true,false,false,false,false);w.shot(2);int puffs=int(w.takeFireSmoke().size());for(int i=0;i<8;++i){w.tick(2);puffs+=int(w.takeFireSmoke().size());}check(puffs==5,"shotgun firing smoke must emit on exactly five source tics");}
+    for(int weapon:{0,5,6,7}){doomfluid::Weapons w;w.reset(weapon);w.effects(true,false,false,false,false);w.shot(weapon);for(int i=0;i<30;++i)w.tick(weapon);check(w.takeFireSmoke().empty(),"weapon emitted unsupported firing puffs");}
+    // Normal firing cadence must preserve the source sub-threshold heat.
+    for(int weapon:{1,2}){doomfluid::Weapons w;w.reset(weapon);w.effects(false,false,true,false,false);
+        int visible=0;for(int shot=0;shot<12;++shot){w.shot(weapon);for(int tic=0;tic<(weapon==1?14:35);++tic){w.tick(weapon);if(!w.barrelEmitters().empty())++visible;}}
+        check(visible>40,"normal cadence failed to produce barrel fumes");
     }
     if(std::getenv("DOOM_TEST_HAND_TRACE")){doomfluid::Weapons s;s.reset(2);for(int t=0;t<30;++t){s.input(true,false);s.tick(2);for(const auto&l:s.layers(1))if(l.sprite=="MRD1I0"||l.sprite=="SHTCA0")std::cout<<t<<" "<<l.sprite<<" "<<l.transform.x<<" "<<l.transform.y<<" "<<l.transform.rotation<<"\n";}}
     std::cout<<"Fluid animation, movement, shell and glove translation tests passed\n";return 0;

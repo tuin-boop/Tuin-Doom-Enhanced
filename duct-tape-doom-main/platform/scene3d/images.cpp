@@ -428,6 +428,16 @@ Image &lumpImage(int lump,bool flat) {
     image.glowHeight=doom_sprite_glow_height(pixels.data(),w,h,palette,image.glow.data());
     return images.emplace(key,std::move(image)).first->second;
 }
+Image &playerColourImage(Image &source,int sourceKey,int color,int &key,const byte *voxelNormals) {
+    if(!color)return source;
+    key=-20000000+sourceKey*4-color;
+    auto found=images.find(key);if(found!=images.end())return found->second;
+    auto pixels=source.pixels;
+    const int ramps[]={0x70,0x60,0x40,0x20};
+    for(size_t i=0;i<pixels.size();i+=2)if(pixels[i]>=0x70&&pixels[i]<=0x7f)pixels[i]=ramps[color&3]+(pixels[i]&15);
+    auto normals=voxelNormals?std::vector<byte>():spriteNormals(source.width,source.height,pixels.data());
+    return images.emplace(key,upload(source.width,source.height,pixels.data(),source.left,source.top,nullptr,voxelNormals?voxelNormals:normals.data())).first->second;
+}
 const std::array<float,3> &averageColor(Image &image) {
     if(image.averaged)return image.average;
     const byte *palette=(const byte*)W_CacheLumpName((char*)"PLAYPAL",PU_CACHE);

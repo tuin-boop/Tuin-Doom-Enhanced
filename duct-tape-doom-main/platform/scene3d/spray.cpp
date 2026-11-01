@@ -109,6 +109,7 @@ static void burst(float x,float y,float z,float dx,float dy,const Burst &b) {
 }
 
 void sprayHit(const mobj_t *target,float x,float y,float z,float dx,float dy,float slope,int damage) {
+    BloodSourceScope bloodSource(target);
     if(!target||!bleeds(*target))return;
     checkSprayLevel();
     // The game puts the hit 10 units short of the body. The exit spray
@@ -129,6 +130,7 @@ void sprayHit(const mobj_t *target,float x,float y,float z,float dx,float dy,flo
     }
 }
 void sprayKill(const mobj_t &thing,float dx,float dy,float speed,float hitZ,bool gib,int overkill) {
+    BloodSourceScope bloodSource(&thing);
     if(!sprayOn()||!bleeds(thing))return;
     checkSprayLevel();
     float x=units(thing.x),y=units(thing.y),feet=units(thing.z),tall=std::max(16.0f,units(thing.info->height)),r=units(thing.radius);
@@ -146,6 +148,7 @@ void sprayKill(const mobj_t &thing,float dx,float dy,float speed,float hitZ,bool
     if(count>=10)I_MadeSound(IMPACT_GORE_BURST,x,y,z);
 }
 void sprayHurt(const mobj_t &thing,float dx,float dy,float hitZ,int damage) {
+    BloodSourceScope bloodSource(&thing);
     if(!sprayOn()||!bleeds(thing))return;
     checkSprayLevel();
     float tall=std::max(16.0f,units(thing.info->height)),z=units(thing.z)+(hitZ>=0?std::clamp(hitZ,tall*0.2f,tall*0.9f):tall*0.6f);
@@ -190,6 +193,7 @@ void spraySmear(float x,float y,float angle,float size) {
 // Wounds drip while they are fresh: about one drop a second from a big
 // hole, thinning out over twenty seconds, falling with the monster's step.
 static void drip(const mobj_t &thing) {
+    BloodSourceScope bloodSource(&thing);
     WoundSpot spots[10];
     int count=woundSpots(&thing,spots,10);
     if(!count)return;
@@ -213,6 +217,7 @@ void watchSpray() {
     float now=gameSeconds();
     for(int i=0;i<numsectors;++i)for(mobj_t *thing=sectors[i].thinglist;thing;thing=thing->snext) {
         if(!bleeds(*thing))continue;
+        BloodSourceScope bloodSource(thing);
         if(thing->health>0) {drip(*thing);slides.erase(thing);continue;}
         float x=units(thing->x),y=units(thing->y),mx=units(thing->momx),my=units(thing->momy),speed=std::hypot(mx,my);
         auto found=slides.find(thing);

@@ -31,6 +31,7 @@
 #include "s_sound.h"
 #include "i_system.h"
 #include "../assets/toasty/voice.h"
+#include "../assets/arena/voices.h"
 #include <SDL3/SDL.h>
 
 #define OUTPUT_RATE 44100
@@ -452,6 +453,11 @@ int I_StartSound(int id,int volume,int separation,int pitch,int priority)
 }
 int I_StartNamedSound(const char *logical,int volume,int separation,int pitch,int priority)
 {
+    if(!strcmp(logical,"DuctTape/ArenaUnsafe")||!strcmp(logical,"DuctTape/ArenaSafe")) {
+        int safe=!strcmp(logical,"DuctTape/ArenaSafe");
+        sample_t sample={safe?arena_safe:arena_unsafe,safe?sizeof(arena_safe):sizeof(arena_unsafe),22050,NULL,0};
+        return start_sample(sample,volume,128,128,OCCLUSION_OPEN_HZ,0,1,1,0x41524e41u,1);
+    }
     if(!strcmp(logical,"DuctTape/Toasty")) {
         sample_t sample={toasty_voice,sizeof(toasty_voice),22050,NULL,0};
         int handle=start_sample(sample,volume,128,128,OCCLUSION_OPEN_HZ,0,1,1,0x544f4153u,1);

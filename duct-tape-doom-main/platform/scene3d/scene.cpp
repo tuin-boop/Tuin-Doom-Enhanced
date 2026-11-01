@@ -1,3 +1,9 @@
+extern "C" {
+#include "i_lan.h"
+}
+extern "C" {
+#include "p_arena.h"
+}
 extern "C" int Menu_BrandOpen(void);
 /* The scene's public state, its lifecycle and the per-frame entry points
    (prepareFrame), plus the backend-independent I_Render3D calls. */
@@ -10,10 +16,11 @@ extern "C" int Menu_BrandOpen(void);
 #include "key_hand.h"
 #include "toasty.h"
 #include "director.h"
+#include "photo.h"
 #include "../../assets/arcade/podium_png.h"
 extern "C" { int Arcade_PodiumRect(float*); extern int arcade_podium_hires; extern unsigned arcade_rank_pixels[SCREENWIDTH*SCREENHEIGHT]; }
 #include "../mod_soundbank.h"
-extern "C" int p_fluidfastpistol;
+extern "C" int p_fluidfastpistol,p_boostchaingun;
 extern "C" int sv_chain_collapses,sv_hanging_fragments,sv_collapse_size;
 extern "C" int p_player_surface_damage,p_monster_surface_damage,p_breakablewalls,p_throughwalls,p_breachdoors,p_wall_damage,p_deeperdig;
 extern "C" {
@@ -129,9 +136,9 @@ static void acceleratedView(player_t *player) {
 }
 void applySettings() {
     fitGame(settings);
-    p_breakablewalls=settings.breakableWalls;
+    p_breakablewalls=settings.breakableWalls&&!netgame;
     p_throughwalls=settings.throughWalls;
-    p_breachdoors=settings.breachDoors;
+    p_breachdoors=settings.breakableWalls&&settings.breachDoors;
     p_deeperdig=settings.deeperDig;
     p_monster_surface_damage=settings.monsterSurfaceDamage;
     p_player_surface_damage=settings.playerSurfaceDamage;
@@ -147,6 +154,7 @@ void applySettings() {
     I_SetFluidSoundAddon(settings.fluidSounds);
     I_SetNearMissSounds(settings.nearMissSounds);
     p_fluidfastpistol=settings.fluidFastPistol;
+    p_boostchaingun=settings.boostChaingun;
     p_noticecombat=settings.combatNotices;
     if(gameWindow&&bool(SDL_GetWindowFlags(gameWindow)&SDL_WINDOW_FULLSCREEN)!=bool(settings.fullscreen))
         SDL_SetWindowFullscreen(gameWindow,settings.fullscreen!=0);
@@ -158,8 +166,13 @@ void applySettings() {
     R_WheelSlowMotion=+[]()->int{return wheelActive;};
     R_MuzzleFlash=settings.accelerated?fluidWeaponShot:nullptr;
     R_WeaponAttack=settings.accelerated?fluidWeaponAttack:nullptr;
+    R_SawHit=settings.accelerated?fluidSawHit:nullptr;
     R_WeaponAux=settings.accelerated&&P_FluidWeaponsEnabled()?fluidWeaponAux:nullptr;
-    p_destructibledoors=0; // Breaching prototype withdrawn; ignore old config values.
+    p_destructibledoors=settings.breakableWalls&&settings.doorBlowout;
+    p_keyarena=settings.keyArena;p_arenaradius=settings.arenaRadius;p_monsterrecovery=settings.monsterRecovery;
+    R_ArenaAnnouncement=[](int safe){I_StartNamedSound(safe?"DuctTape/ArenaSafe":"DuctTape/ArenaUnsafe",snd_SfxVolume,128,128,100);};
+    p_keydoorshield=settings.breakableWalls&&settings.keyDoorShield;p_switchdoorshield=settings.breakableWalls&&settings.switchDoorShield;
+    R_DoorRocketImpact=settings.accelerated?rocketDoorImpact:nullptr;
     R_RocketImpact=settings.accelerated?fluidProjectileImpact:nullptr;
     R_BFGHit=settings.accelerated?fluidBFGHit:nullptr;
     R_DoorMotion=settings.accelerated?doorMotion:nullptr;
@@ -167,7 +180,7 @@ void applySettings() {
     R_SurfaceChip=settings.accelerated?surfaceChip:nullptr;
     R_RubbleImpact=settings.accelerated?rubbleImpact:nullptr;
     R_SolidBulletImpact=settings.accelerated?solidBulletImpact:nullptr;
-    R_DoorDamage=nullptr;
+    R_DoorDamage=settings.accelerated?doorDamage:nullptr;
     R_WallImpact=settings.accelerated?wallImpact:nullptr;
     R_DamageHit=settings.accelerated?bodyDamaged:nullptr;
     R_BloodHit=settings.accelerated?bloodHit:nullptr;
@@ -216,7 +229,7 @@ void sceneShutdown() {
     for(auto &texture:keyHandTextures)texture.reset();keyHandVisible=keyWeaponDrop=0;
     toastyTexture.reset();toastyVisible=0;romeroTexture.reset();romeroAge=-1;
     stopRelight();
-    R_AcceleratedView=nullptr;R_BeforeTic=nullptr;R_MuzzleFlash=nullptr;R_WallImpact=nullptr;R_RocketImpact=nullptr;R_BFGHit=nullptr;R_DoorMotion=nullptr;R_DoorDamage=nullptr;R_CraterCrumble=nullptr;R_SurfaceChip=nullptr;R_SolidBulletImpact=nullptr;R_RubbleImpact=nullptr;R_DamageHit=nullptr;R_BloodHit=nullptr;R_PlaneImpact=nullptr;R_ShotPassed=nullptr;r_uncapped=0;v_overlayactive=0;
+    R_AcceleratedView=nullptr;R_BeforeTic=nullptr;R_MuzzleFlash=nullptr;R_WallImpact=nullptr;R_RocketImpact=nullptr;R_DoorRocketImpact=nullptr;R_BFGHit=nullptr;R_DoorMotion=nullptr;R_DoorDamage=nullptr;R_CraterCrumble=nullptr;R_SurfaceChip=nullptr;R_SolidBulletImpact=nullptr;R_RubbleImpact=nullptr;R_DamageHit=nullptr;R_BloodHit=nullptr;R_PlaneImpact=nullptr;R_ShotPassed=nullptr;r_uncapped=0;v_overlayactive=0;
     lightBlockers.clear();flashes={};oldThings.clear();oldHeights.clear();
     vertexSections.clear();batches.clear();shadowBatches.clear();decalBatches.clear();effectBatches.clear();effectAddBatches.clear();mirrorBatches.clear();particleVertices.clear();
     mistVertices.clear();skyVertices.clear();shaftVertices.clear();heatVertices.clear();
@@ -463,7 +476,7 @@ FrameView prepareFrame(int w,int h) {
         }
         camera.eye[0]=units(mo->x);camera.eye[1]=units(mo->y);camera.eye[2]=units(player->viewz);
         float yaw=(float)(mo->angle*(2.0*doomPi/4294967296.0));
-        if(tickTime&&!paused&&!menuactive&&(!demoplayback||director_demo)) {
+        if(tickTime&&!paused&&!menuactive&&!r_photoactive&&(!demoplayback||director_demo)) {
             fraction=worldInterpolation(SDL_GetTicksNS());
             if(std::hypot(camera.eye[0]-oldEye[0],camera.eye[1]-oldEye[1])<128) {
                 for(int i=0;i<3;++i)camera.eye[i]=oldEye[i]+(camera.eye[i]-oldEye[i])*fraction;
@@ -473,12 +486,12 @@ FrameView prepareFrame(int w,int h) {
         // A game with its own look (Heretic) sets the pitch, demos included;
         // mouselook turns that look (I_Render3DLook) so its aiming agrees.
         float gameLook;
-        float look=Game_LookPitch(&gameLook)?gameLook:demoplayback&&!director_demo?0:pitch;
-        tourpitch=look;freeaim=settings.look&&(!demoplayback||director_demo);
+        float look=netgame&&!lan_session?0:Game_LookPitch(&gameLook)?gameLook:demoplayback&&!director_demo?0:pitch;
+        tourpitch=look;freeaim=(!netgame||lan_session)&&settings.look&&(!demoplayback||director_demo);
         camera.right[0]=sin(yaw);camera.right[1]=-cos(yaw);
         camera.forward[0]=cos(yaw)*cos(look);camera.forward[1]=sin(yaw)*cos(look);camera.forward[2]=sin(look);
         camera.up[0]=-cos(yaw)*sin(look);camera.up[1]=-sin(yaw)*sin(look);camera.up[2]=cos(look);
-        applyPeek(camera);directorView(camera,float(fraction));
+        applyPeek(camera);directorView(camera,float(fraction));photoView(camera);
         camera.fog[0]=0.00045f*(player->mo->subsector->sector->ceilingpic==skyflatnum?0.35f:1.0f);
         camera.fog[1]=0.012f;camera.fog[2]=fogReferenceHeight;
         camera.fog[3]=(leveltime+fraction)/TICRATE;
@@ -586,24 +599,24 @@ std::vector<unsigned> hudPixels(const unsigned *pixels) {
                 float silver=.69f+.12f*(1+std::cos(y*.8f))*.5f;
                 r=g=b=silver;
             }
-            float shade=(tag&255)==2?1.f:.75f;
+            float shade=rank==4?float(tag&255)/255.f:((tag&255)==2?1.f:.75f);
             ranks[i]=0xff000000u|((unsigned)(b*shade*255)<<16)|((unsigned)(g*shade*255)<<8)|(unsigned)(r*shade*255);
         }
         if(!arcadeRankTexture)arcadeRankTexture=gpuCreateTexture(GpuFormat::RGBA8,SCREENWIDTH,SCREENHEIGHT,ranks.data(),SCREENWIDTH*4);
         else gpuUpdateTexture(arcadeRankTexture,GpuFormat::RGBA8,{{0,0,SCREENWIDTH,SCREENHEIGHT}},ranks.data(),SCREENWIDTH*4);
     }
     std::vector<unsigned> modern(SCREENWIDTH*SCREENHEIGHT,0);
-    if((director_watch||director_demo&&demoplayback)&&!menuactive){std::fill(overlay.begin(),overlay.end(),0);}
+    if((r_photoactive||director_watch||director_demo&&demoplayback)&&!menuactive){if(!r_photoactive)std::fill(overlay.begin(),overlay.end(),0);}
     else modernHud(modern);
     directorMarkers(overlay);
-    if(!(director_demo&&demoplayback)){
+    if(!r_photoactive&&!(director_demo&&demoplayback)){
     keyNotice(overlay);
     keyHandNotice();
     toastyNotice();
     romeroNotice();
     wheelDraw(overlay);
     }else {keyHandVisible=0;toastyVisible=0;romeroAge=-1;}
-    if(settings.fps&&worldPending&&!menuactive&&fps>0&&!(director_demo&&demoplayback)) {
+    if(!r_photoactive&&settings.fps&&worldPending&&!menuactive&&fps>0&&!(director_demo&&demoplayback)) {
         // Readable in fullscreen, independent of HUD layout and scale.
         char lines[2][48];snprintf(lines[0],48,"%.0f FPS",fps);
         snprintf(lines[1],48,"%.1f MS / MAX %.1f",frameMs,peakFrameMs);
@@ -660,8 +673,10 @@ bool renderCheckDue() {
     return due;
 }
 void saveScreenshot(const void *bgra,int width,int height,int stride) {
-    SDL_CreateDirectory("Screenshots");
-    char path[256];snprintf(path,sizeof(path),"Screenshots/%s-%llu.png",Game_Title(),(unsigned long long)SDL_GetTicksNS());
+    const char *folder=SDL_getenv("TUIN_SCREENSHOTS");
+    if(!folder||!*folder)folder="Screenshots";
+    SDL_CreateDirectory(folder);
+    char path[4096];snprintf(path,sizeof(path),"%s/%s-%llu.png",folder,Game_Title(),(unsigned long long)SDL_GetTicksNS());
     int test=M_CheckParm((char*)"-rendercheck");
     const char *output=test&&test+1<myargc?myargv[test+1]:profile.screenshotPath?profile.screenshotPath:path;
     profile.screenshotPath=nullptr;
@@ -690,6 +705,7 @@ void saveScreenshot(const void *bgra,int width,int height,int stride) {
         surface=sheet;
     }
     bool saved=surface&&SDL_SavePNG(surface,output);SDL_DestroySurface(surface);
+    if(!test&&r_photoactive)photoCaptureFeedback(saved,output);
     if(!test) players[consoleplayer].message=(char*)(saved?"SCREENSHOT SAVED":"SCREENSHOT FAILED");
     fprintf(stderr,"Screenshot %s: %s (%dx%d).\n",saved?"saved":"failed",output,width,height);
     if(test) {if(!saved)I_Error((char*)"Render check could not save image");I_Quit();}
@@ -722,11 +738,20 @@ extern "C" void I_TestBundledModSettings() {
     int digSetting=settings.breakableWalls;
     for(int value=0;value<2;++value){settings.breakableWalls=value;applySettings();if(p_breakablewalls!=value)I_Error((char*)"Breakable walls live toggle failed");}
     settings.breakableWalls=digSetting;applySettings();
+    {
+        int blow=settings.doorBlowout,key=settings.keyDoorShield,remote=settings.switchDoorShield,breach=settings.breachDoors;
+        settings.doorBlowout=settings.keyDoorShield=settings.switchDoorShield=settings.breachDoors=1;
+        settings.breakableWalls=0;applySettings();
+        if(p_destructibledoors||p_keydoorshield||p_switchdoorshield||p_breachdoors)I_Error((char*)"Destruction master failed to disable doors");
+        settings.breakableWalls=1;applySettings();
+        if(!p_destructibledoors||!p_keydoorshield||!p_switchdoorshield||!p_breachdoors)I_Error((char*)"Door preferences not restored with master");
+        settings.doorBlowout=blow;settings.keyDoorShield=key;settings.switchDoorShield=remote;settings.breachDoors=breach;settings.breakableWalls=digSetting;applySettings();
+    }
     int throughSetting=settings.throughWalls;
     for(int value=0;value<2;++value){settings.throughWalls=value;applySettings();if(p_throughwalls!=value)I_Error((char*)"Through-wall breach live toggle failed");}
     settings.throughWalls=throughSetting;applySettings();
     int doorsSetting=settings.breachDoors;
-    for(int value=0;value<2;++value){settings.breachDoors=value;applySettings();if(p_breachdoors!=value)I_Error((char*)"Door breach live toggle failed");}
+    for(int value=0;value<2;++value){settings.breachDoors=value;applySettings();if(p_breachdoors!=(value&&settings.breakableWalls))I_Error((char*)"Door breach live toggle failed");}
     settings.breachDoors=doorsSetting;applySettings();
     int damageSetting=settings.wallDamage;
     for(int value:{100,250,500}){settings.wallDamage=value;applySettings();if(p_wall_damage!=value)I_Error((char*)"Wall damage live setting failed");}
@@ -874,8 +899,8 @@ extern "C" int I_TestWheelInterpolation(void){
     worldInterpolation(SDL_GetTicksNS());return ok;
 }
 void I_Render3DWheelKey(int down){
-    if(down>0){if(gamestate!=GS_LEVEL||menuactive||paused||demoplayback||demorecording||netgame||players[consoleplayer].health<=0)return;wheelActive=true;wheelLevel=r_levelserial;wheelSelected=players[consoleplayer].readyweapon;wheelX=wheelY=0;}
-    else {if(down==0&&wheelActive&&gamestate==GS_LEVEL&&!menuactive&&!paused&&wheelLevel==r_levelserial&&players[consoleplayer].health>0&&wheelOwned(wheelSelected)&&wheelSelected!=players[consoleplayer].readyweapon)players[consoleplayer].pendingweapon=(weapontype_t)wheelSelected;wheelActive=false;}
+    if(down>0){if(gamestate!=GS_LEVEL||menuactive||paused||demoplayback||demorecording||(netgame&&!lan_session)||players[consoleplayer].health<=0)return;wheelActive=true;wheelLevel=r_levelserial;wheelSelected=players[consoleplayer].readyweapon;wheelX=wheelY=0;}
+    else {if(down==0&&wheelActive&&gamestate==GS_LEVEL&&!menuactive&&!paused&&wheelLevel==r_levelserial&&players[consoleplayer].health>0&&wheelOwned(wheelSelected)&&wheelSelected!=players[consoleplayer].readyweapon){if(lan_session){lan_wheelweapon=wheelSelected;++lan_wheelserial;}else players[consoleplayer].pendingweapon=(weapontype_t)wheelSelected;}wheelActive=false;}
 }
 void I_Render3DWheelMove(float x,float y){if(!wheelActive)return;wheelX+=x*.35f;wheelY+=y*.35f;float radius=std::hypot(wheelX,wheelY*1.2f);if(radius>76){wheelX*=76/radius;wheelY*=76/radius;}if(radius>12){float angle=std::atan2(wheelY*1.2f,wheelX)+1.570796327f+3.141592654f/9;wheelSelected=int(std::floor(angle/(6.283185307f/9)+9))%9;}}
 int I_Render3DIsAccelerated(void) {return settings.accelerated;}
@@ -889,10 +914,10 @@ void I_Render3DLook(float delta) {
     else pitch=std::clamp(pitch-delta*0.002f,P_UseUZMovement()?-1.55334f:-1.2f,P_UseUZMovement()?1.55334f:1.2f);
 }
 void I_Render3DToggleFlashlight(void) {if(settings.accelerated&&Game_HasEffect(GAME_EFFECT_FLASHLIGHT))flashlightOn=!flashlightOn;}
-void I_Render3DScreenshot(void) {screenshotPending=true;}
+void I_Render3DScreenshot(void) {photoSavedAt=0;r_photoNoticeUntil=0;screenshotPending=true;}
 const I_Render3DFrameProfile *I_Render3DLastFrame(void) {return &profile.frame;}
 void I_Render3DProfileTeleported(void) {surfaceSelection.clear();surfaceLightTime=0;}
-void I_Render3DScreenshotTo(const char *path) {profile.screenshotPath=path;screenshotPending=true;}
+void I_Render3DScreenshotTo(const char *path) {photoSavedAt=0;r_photoNoticeUntil=0;profile.screenshotPath=path;screenshotPending=true;}
 
 
 
