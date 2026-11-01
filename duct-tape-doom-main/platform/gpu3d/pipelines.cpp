@@ -99,7 +99,7 @@ static SDL_GPUGraphicsPipeline *pipeline(SDL_GPUShader *vertex,SDL_GPUShader *fr
     return result;
 }
 bool createPipelines() {
-    worldVertexShader=VERTEX_SHADER(world_vert,1);reflectVertexShader=VERTEX_SHADER(reflect_vert,2);
+    worldVertexShader=VERTEX_SHADER(world_vert,2);reflectVertexShader=VERTEX_SHADER(reflect_vert,3);
     screenVertexShader=VERTEX_SHADER(screen_vert,0);skyVertexShader=VERTEX_SHADER(sky_vert,0);
     SDL_GPUShader *world=FRAGMENT_SHADER(world_frag,16,2,4),*opaque=FRAGMENT_SHADER(opaque_frag,16,2,4);
     SDL_GPUShader *cutout=FRAGMENT_SHADER(cutout_frag,16,2,4),*coverage=FRAGMENT_SHADER(coverage_frag,16,2,4);

@@ -5,6 +5,7 @@
 #include <memory>
 #include <stdexcept>
 namespace doom3d {
+std::vector<VoxelInstance> voxelDraws,voxelMirrorDraws;
 namespace {
 std::unique_ptr<doommod::Archive> voxelArchive;
 bool attempted=false;
@@ -45,6 +46,19 @@ void ensureTexture(Entry &e) {
  for(size_t i=0;i<m.texels.size();i+=2){pixels[i]=remap[m.texels[i]];pixels[i+1]=255;normals[i]=normals[i+1]=m.texels[i+1]?255:128;}
  images.emplace(e.key,upload(m.texWidth,m.texHeight,pixels.data(),0,0,nullptr,normals.data()));
 }
+}
+std::vector<Vertex> voxelMesh(int key) {
+ for(const auto &e:voxelEntries)if(e.second.key==key&&e.second.model){
+  std::vector<Vertex> result;
+  for(const auto &f:e.second.model->faces){
+   int u=(f.axis+1)%3,v=(f.axis+2)%3;Vertex q[4];
+   for(int n=0;n<4;++n){auto p=f.p;p[u]+=(n==1||n==2)?f.w:0;p[v]+=n>=2?f.h:0;
+    q[n]={float(p[0]),float(p[1]),float(p[2]),float(f.tx+((n==1||n==2)?f.w:0)),float(f.ty+(n>=2?f.h:0)),0,0x80000000u};
+    q[n].red=f.axis==0?float(f.sign):0;q[n].green=f.axis==1?float(f.sign):0;q[n].blue=f.axis==2?float(f.sign):0;
+   }
+   if(f.sign>0)quad(result,q[0],q[1],q[2],q[3]);else quad(result,q[3],q[2],q[1],q[0]);
+  }return result;
+ }return {};
 }
 bool voxelDetected() {
  if(attempted)return bool(voxelArchive);attempted=true;
@@ -88,6 +102,11 @@ bool drawVoxel(std::map<int,std::vector<Vertex>> &out,const mobj_t &thing,int sp
   if(eyes)mode|=MODE_GLOWING_EYES;
   float dx=camera.eye[0]-x,dy=camera.eye[1]-y;
   const float localEye[3]={cs*dx+sn*dy+m.pivot[0],sn*dx-cs*dy+m.pivot[1],m.pivot[2]-(camera.eye[2]-z)};
+  if(!M_CheckParm((char*)"-cpuvoxels")){
+   VoxelInstance instance={entry.key,imageKey,{x,y,z,0},{m.pivot[0],m.pivot[1],m.pivot[2],light},{cs,sn,0,0},
+    {full?0:baked[0],full?0:baked[1],full?0:baked[2],0},{localEye[0],localEye[1],localEye[2],0},{mode,statics,tint,0}};
+   (&out==&mirrorBatches?voxelMirrorDraws:voxelDraws).push_back(instance);return true;
+  }
   // Reject invisible back faces before transforming or uploading any vertices.
   for(const auto &f:m.faces){if((localEye[f.axis]-f.p[f.axis])*f.sign<=0)continue;int u=(f.axis+1)%3,v=(f.axis+2)%3;Vertex q[4];
    for(int n=0;n<4;++n){auto p=f.p;p[u]+=(n==1||n==2)?f.w:0;p[v]+=n>=2?f.h:0;

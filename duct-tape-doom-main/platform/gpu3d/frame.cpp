@@ -141,6 +141,7 @@ static void drawMirror(SDL_GPUCommandBuffer *render,const FrameView &view,const 
     if(extra) {
         SDL_BindGPUGraphicsPipeline(pass,reflectWorldPipeline);bindWorld(pass,nullptr);
         for(const auto &batch:*extra) if(!batch.second.empty()) {bindSurface(render,pass,batch.first,3);drawVertices(pass,batch.second);}
+        drawVoxels(render,pass,voxelMirrorDraws,true);
     }
     SDL_EndGPURenderPass(pass);
 }
@@ -232,6 +233,7 @@ static void drawMistDepth(SDL_GPUCommandBuffer *render,const FrameView &view,con
     SDL_BindGPUGraphicsPipeline(pass,depthPipeline);
     SDL_PushGPUVertexUniformData(render,0,&camera,sizeof(camera));
     for(const auto &batch:batches) if(!batch.second.empty()) {bindImage(pass,images.at(batch.first).texture,nearestClamp);drawVertices(pass,batch.second);}
+    drawVoxels(render,pass,voxelDraws,false,true);
     SDL_GPUTextureSamplerBinding solid={solidTexel,nearestClamp};
     SDL_BindGPUFragmentSamplers(pass,0,&solid,1);drawVertices(pass,skyVertices);
     SDL_EndGPURenderPass(pass);
@@ -341,6 +343,7 @@ static void drawBloom(SDL_GPUCommandBuffer *render,const FrameView &view,const U
     SDL_BindGPUFragmentSamplers(glowPass,1,&palette,1);
     bindEmissionEdges(render,glowPass,camera);
     for(const auto &batch:batches) if(!batch.second.empty()) {bindSurface(render,glowPass,batch.first,0,false);drawVertices(glowPass,batch.second);}
+    drawVoxels(render,glowPass,voxelDraws,false,false,true);
     // The sky hides glow behind it: a covered texel with no emission.
     SDL_GPUTextureSamplerBinding solid={solidTexel,nearestClamp};
     SDL_BindGPUFragmentSamplers(glowPass,0,&solid,1);SDL_BindGPUFragmentSamplers(glowPass,2,&solid,1);

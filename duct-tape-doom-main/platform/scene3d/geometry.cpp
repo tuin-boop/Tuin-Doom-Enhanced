@@ -552,7 +552,7 @@ void geometry(const Uniforms &camera,float fraction) {
         visibleLeaves(camera,unused,unused,true);
     }
     retainSolidAssembly();
-    vertexSections.clear();
+    vertexSections.clear();voxelDraws.clear();voxelMirrorDraws.clear();
     for(auto &batch:batches)batch.second.clear();
     for(auto &batch:shadowBatches)batch.second.clear();
     for(auto &batch:mirrorBatches)batch.second.clear();

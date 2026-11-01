@@ -216,6 +216,22 @@ int main(){try{
     check(plasma.layers(1)[0].sprite=="PLSOA0"&&plasma.layers(1)[1].sprite=="PL1GA0","plasma rear barrel obscures front casing");
     for(int tic=0;tic<45;++tic){for(const auto&layer:bfg.layers(1))check(layer.sprite.rfind("BF1F",0)!=0,"BFG fired before gameplay projectile");bfg.tick(6);}
     bfg.shot(6);check(bfg.layers(1).front().sprite=="BF1FA0","BFG release missing");
+    {
+        doomfluid::Weapons starter;starter.reset(7);
+        float lowered=0;bool pulling=false;
+        for(int tic=0;tic<40;++tic){
+            starter.input(tic==0,false);starter.tick(7);
+            auto layers=starter.layers(1);
+            if(tic==5)lowered=layers.front().transform.y;
+            for(const auto& layer:layers)if(layer.sprite=="SAW1Y0"){
+                pulling=true;
+                check(lowered>=25 && layers.front().transform.y>=lowered,
+                      "chainsaw idle reset starter pose and exposed the third hand");
+            }
+        }
+        check(pulling,"chainsaw starter regression did not exercise pull");
+        check(std::abs(starter.layers(1).front().transform.y)<1,"chainsaw starter failed to return to idle");
+    }
     for(int weapon=0;weapon<9;++weapon){
         doomfluid::Weapons controller;controller.reset(weapon);std::set<std::string> frames;
         for(int tic=0;tic<400;++tic){

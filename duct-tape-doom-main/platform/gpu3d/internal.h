@@ -66,6 +66,7 @@ void uploadFrame(SDL_GPUCommandBuffer *command,const std::vector<const std::vect
                  const std::vector<std::array<float,4>> &sectors,const unsigned *palette,const std::vector<unsigned> &hud,
                  const std::vector<unsigned> &panel);
 void releaseFrameUploads();
+void drawVoxels(SDL_GPUCommandBuffer*,SDL_GPURenderPass*,const std::vector<VoxelInstance>&,bool reflected=false,bool depth=false,bool emission=false);
 void drawVertices(SDL_GPURenderPass *pass,const std::vector<Vertex> &vertices);
 void setView(SDL_GPURenderPass *pass,float x,float y,float w,float h,const SDL_Rect *scissor=nullptr);
 void bindWorld(SDL_GPURenderPass *pass,SDL_GPUTexture *reflection);

@@ -234,6 +234,13 @@ extern std::vector<LightBlocker> lightBlockers;
 extern std::unordered_map<int,Image> images;
 // Stable identities for independently rebuilt mesh sections. Offsets describe
 // this frame's CPU batches; GPU residency validates the final vertex bytes.
+struct VoxelInstance {
+ int meshKey,imageKey;
+ float origin[4],pivotLight[4],rotation[4],baked[4],localEye[4];
+ unsigned shading[4];
+};
+extern std::vector<VoxelInstance> voxelDraws,voxelMirrorDraws;
+std::vector<Vertex> voxelMesh(int key);
 struct VertexSection {uint64_t id;size_t first,count;unsigned revision;uint64_t maskStamp=0;};
 extern std::map<const std::vector<Vertex>*,std::vector<VertexSection>> vertexSections;
 extern std::map<int,std::vector<Vertex>> batches,shadowBatches,decalBatches,effectBatches,effectAddBatches;
