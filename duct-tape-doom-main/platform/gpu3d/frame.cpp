@@ -8,7 +8,7 @@ extern "C" float I_PhotoFlash(void);
 extern "C" int Arcade_PodiumRect(float*);
 extern "C" int Arcade_MenuOpen(void);
 extern "C" int director_view_active;
-namespace doom3d {extern GpuTextureRef arcadeRankTexture;}
+namespace doom3d {extern GpuTextureRef arcadeRankTexture,scanPanelTexture;extern bool scanPanelVisible;extern float scanPopupAlpha,scanPopupSlide;}
 
 namespace gpu3d {
 // The in-game settings panel: a quad over the whole drawable whose texture
@@ -16,7 +16,8 @@ namespace gpu3d {
 // beyond it the clamped border texels dim the view.
 static std::vector<Vertex> settingsQuad;
 static std::vector<Vertex> toastyQuad,romeroQuad,arcadePodiumQuad;
-static std::vector<Vertex> arcadeRankQuad;
+static std::vector<Vertex> arcadeRankQuad,scanQuad,pdaCursorQuad,scanPanelQuad;
+static SDL_GPUTexture *scanColor=nullptr,*scanDepth=nullptr;
 static float settingsOrigin[2]={},settingsScale=1;
 static void present(SDL_GPUCommandBuffer *command,SDL_GPUTexture *target,const FrameView &view) {
     SDL_GPUColorTargetInfo info={};
@@ -31,6 +32,13 @@ static void present(SDL_GPUCommandBuffer *command,SDL_GPUTexture *target,const F
     SDL_GPUTextureSamplerBinding samplers[]={{colorTexture,linearClamp},{bloomTexture,linearClamp},{hudTexture,linearClamp},{paletteLUT,nearestClamp},{sampleCount!=SDL_GPU_SAMPLECOUNT_1?sceneDepth:depthTexture,nearestClamp}};
     SDL_BindGPUFragmentSamplers(pass,0,samplers,5);
     SDL_DrawGPUPrimitives(pass,3,1,0,0);
+    if(!scanPanelQuad.empty()&&scanPanelTexture){SDL_BindGPUGraphicsPipeline(pass,settingsPipeline);SDL_GPUTextureSamplerBinding panel={gpu(scanPanelTexture),nearestClamp};SDL_BindGPUFragmentSamplers(pass,0,&panel,1);drawVertices(pass,scanPanelQuad);}
+    if(!scanQuad.empty()&&scanColor){
+        SDL_BindGPUGraphicsPipeline(pass,settingsPipeline);
+        SDL_GPUTextureSamplerBinding scan={scanColor,linearClamp};
+        SDL_BindGPUFragmentSamplers(pass,0,&scan,1);drawVertices(pass,scanQuad);
+    }
+    if(!pdaCursorQuad.empty()&&pdaCursorTexture){SDL_BindGPUGraphicsPipeline(pass,settingsPipeline);SDL_GPUTextureSamplerBinding cursor={gpu(pdaCursorTexture),nearestClamp};SDL_BindGPUFragmentSamplers(pass,0,&cursor,1);drawVertices(pass,pdaCursorQuad);}
     if(!toastyQuad.empty() && toastyTexture) {
         SDL_BindGPUGraphicsPipeline(pass,settingsPipeline);
         SDL_GPUTextureSamplerBinding portrait={gpu(toastyTexture),linearClamp};
@@ -116,6 +124,23 @@ static unsigned probeAtlasSerial=~0u;
 // The world drawn again at reduced resolution from the mirrored camera,
 // clipped to the eye's side of plane (unit normal toward the eye, offset).
 // Its sprites: the main view's, or extra in their place.
+static void drawMonsterScan(SDL_GPUCommandBuffer *command){
+    if(!scanVisible)return;
+    if(!scanColor){
+        scanColor=createTexture(SDL_GPU_TEXTUREFORMAT_B8G8R8A8_UNORM,320,264,SDL_GPU_TEXTUREUSAGE_COLOR_TARGET|SDL_GPU_TEXTUREUSAGE_SAMPLER);
+        scanDepth=createTexture(depthFormat,320,264,SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET);
+        if(!scanColor||!scanDepth)I_Error("Could not allocate monster scan target");
+    }
+    SDL_GPUColorTargetInfo color={};color.texture=scanColor;color.clear_color={.02f,.055f,.035f,1};color.load_op=SDL_GPU_LOADOP_CLEAR;color.store_op=SDL_GPU_STOREOP_STORE;
+    SDL_GPUDepthStencilTargetInfo depth={};depth.texture=scanDepth;depth.clear_depth=1;depth.load_op=SDL_GPU_LOADOP_CLEAR;depth.store_op=SDL_GPU_STOREOP_DONT_CARE;
+    depth.stencil_load_op=SDL_GPU_LOADOP_DONT_CARE;depth.stencil_store_op=SDL_GPU_STOREOP_DONT_CARE;
+    auto pass=SDL_BeginGPURenderPass(command,&color,1,&depth);setView(pass,0,0,320,264);
+    SDL_BindGPUGraphicsPipeline(pass,reflectWorldPipeline);pushWorldUniforms(command,scanCamera);
+    float plane[4]={0,0,0,-4096};SDL_PushGPUVertexUniformData(command,1,plane,sizeof(plane));bindWorld(pass,nullptr);
+    drawVoxels(command,pass,scanVoxels,true);
+    for(auto &b:scanSprites){bindSurface(command,pass,b.first,3);drawVertices(pass,b.second);}
+    SDL_EndGPURenderPass(pass);
+}
 static void drawMirror(SDL_GPUCommandBuffer *render,const FrameView &view,const Uniforms &mirror,const float plane[4],MirrorTarget &target,
                        const std::map<int,std::vector<Vertex>> *extra=nullptr) {
     int divisor=settings.retroReflections?8:2;
@@ -401,6 +426,7 @@ static void submitProfiled(SDL_GPUCommandBuffer *render,uint64_t frameStart) {
     profile.frame.cpuMs=(submit-frameStart)/1e6;profile.frame.gpuMs=(done-submit)/1e6;
 }
 void releaseReflection() {
+    release(scanColor);release(scanDepth);
     for(MirrorTarget *t:{&liquidMirror,&glassMirror}) {release(t->color);release(t->depth);t->width=t->height=0;}
     release(probeAtlas);release(probeDepth);probeAtlasSerial=~0u;
 }
@@ -459,13 +485,24 @@ void I_Render3DPresent(const unsigned *pixels,const unsigned *palette) {
     // stretching lettering or shifting menus, notices, or the weapon wheel.
     const float edges[]={0,136,202,320};
     for(int group=0;group<3;++group) {
-        float shift=settings.hudLayout==1?0.f:(group==0?-view.uiX:group==2?width-view.uiX-view.uiWidth:0.f);
+        float shift=settings.hudLayout==1?0.f:(group==0?-view.uiX:group==2?width-view.uiX-view.uiWidth+scanPopupSlide*view.uiWidth/320:0.f);
         screenQuad(hud,-1+2*edges[group]/320+2*shift/view.uiWidth,1,
             2*(edges[group+1]-edges[group])/320,2,edges[group]/320,.5f,edges[group+1]/320,1);
     }
     for(auto &v:hud)v.x=(v.x*view.uiWidth+2*view.uiX+view.uiWidth-width)/width;
-    std::vector<Vertex> cross;if(!director_view_active)cross=crosshairVertices(view.worldW,view.worldH);
+    std::vector<Vertex> cross;if(!director_view_active&&!pdaActive)cross=crosshairVertices(view.worldW,view.worldH);
     std::vector<const std::vector<Vertex>*> transient={&hud,&cross};
+    const float scanShift=scanPanelVisible&&!pdaActive?width-view.uiX-view.uiWidth+scanPopupSlide*view.uiWidth/320:0.f;
+    scanPanelQuad.clear();
+    if(scanPanelVisible&&!pdaActive){screenQuad(scanPanelQuad,2*(view.uiX+scanShift)/width-1,1-2*view.uiY/height,2*view.uiWidth/width,2*view.uiHeight/height,0,0,1,1);for(auto &v:scanPanelQuad)v.light=scanPopupAlpha;transient.push_back(&scanPanelQuad);}
+    scanQuad.clear();
+    if(scanVisible){
+        float x=(view.uiX+scanShift+scanRect[0]*view.uiWidth/320)/width,y=(view.uiY+scanRect[1]*view.uiHeight/200)/height;
+        screenQuad(scanQuad,x*2-1,1-y*2,scanRect[2]*view.uiWidth/320/width*2,scanRect[3]*view.uiHeight/200/height*2,0,0,1,1);
+        if(scanPanelVisible&&!pdaActive)for(auto &v:scanQuad)v.light=scanPopupAlpha;transient.push_back(&scanQuad);
+        for(auto &b:scanSprites)transient.push_back(&b.second);
+    }
+    pdaCursorQuad.clear();if(pdaActive&&pdaCursorTexture){float x=(view.uiX+(pdaCursor[0]-3)*view.uiWidth/320)/width,y=(view.uiY+(pdaCursor[1]-1)*view.uiHeight/200)/height;screenQuad(pdaCursorQuad,x*2-1,1-y*2,10.f*view.uiWidth/320/width*2,10.f*view.uiHeight/200/height*2,0,0,1,1);transient.push_back(&pdaCursorQuad);}
     arcadeRankQuad.clear();
     if((Arcade_MenuOpen()||Menu_BrandOpen())&&arcadeRankTexture){
         // Composite after palette/post-processing so purple stays purple.
@@ -511,6 +548,7 @@ void I_Render3DPresent(const unsigned *pixels,const unsigned *palette) {
     if(!render) I_Error((char*)"GPU command buffer: %s",SDL_GetError());
     uploadFrame(render,transient,sectorInfo(),palette,overlay,settingsImage);
     stage(2);
+    drawMonsterScan(render);
     drawReflection(render,view,camera);
     captureGlassProbes(render,camera);
     glassReflected=drawGlassReflection(render,view,camera);

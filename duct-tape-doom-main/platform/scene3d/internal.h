@@ -503,6 +503,7 @@ void sprayShutdown();
 // flatten: the whole body shortened by that share (a landing's settle, from the death director).
 struct BodyPose { float lean[2],whip[2],squash,lift,flatten;bool flier; };
 void bodyHit(mobj_t *target,fixed_t fx,fixed_t fy,fixed_t fz,fixed_t fdx,fixed_t fdy,int damage);
+void monsterScanHit(mobj_t *target,mobj_t *source,int damage);
 void bodyDamaged(mobj_t *target,mobj_t *inflictor,mobj_t *source,int damage);
 void watchBodies();
 void bodyMotionShutdown();

@@ -71,6 +71,11 @@ const I_Render3DFrameProfile *I_Render3DLastFrame(void);
 void I_Render3DProfileTeleported(void);
 /* The next screenshot goes to path instead of Screenshots/. */
 void I_Render3DScreenshotTo(const char *path);
+int I_PdaOpen(void);
+void I_PdaToggle(void);
+void I_PdaKey(int key);
+void I_PdaMouse(float x,float y,int action);
+void I_PdaScroll(int amount);
 int I_Render3DWheelOpen(void);
 void I_Render3DWheelKey(int down);
 int I_Render3DPeekKey(int scancode,int down);

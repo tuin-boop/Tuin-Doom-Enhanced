@@ -17,7 +17,9 @@ The Windows launcher includes the engine and the supplied FluidWeapons, FluidWea
 
 ## Latest update
 
-The latest update keeps **voxel meshes resident on the GPU**, reducing repeated CPU work and geometry uploads while retaining full model detail, lighting and glowing eyes. It also fixes the chainsaw starter animation showing an extra hand. [GPU voxel update notes](docs/changes/RELEASE-2026-11-01-GPU-VOXELS.md).
+The November 10 update adds the **Field PDA** for discovered monsters, weapons and items, plus optional compact green discovery cards. Open the PDA with **P** or the separate button to the right of the weapon wheel. Discovery cards remain off by default. [PDA and discovery update notes](docs/changes/RELEASE-2026-11-10-PDA.md).
+
+The previous update keeps **voxel meshes resident on the GPU**, reducing repeated CPU work and geometry uploads while retaining full model detail, lighting and glowing eyes. It also fixes the chainsaw starter animation showing an extra hand. [GPU voxel update notes](docs/changes/RELEASE-2026-11-01-GPU-VOXELS.md).
 
 The November 1 release adds **in-game LAN hosting and browsing**, **mid-match joining**, host-controlled co-op friendly fire, player colours, synchronized vertical aiming, a normal-speed multiplayer weapon wheel and live multiplayer photo mode. Both PCs need the same build and game files. See [LAN setup and limitations](launcher/LAN-MULTIPLAYER.md).
 

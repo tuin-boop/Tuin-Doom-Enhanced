@@ -69,6 +69,7 @@ static void pushOf(const mobj_t &thing,const Body &before,float hitDx,float hitD
     if(dx==0&&dy==0) {float a=hashUnit((int)(uintptr_t)&thing,leveltime,0x51u)*2*doomPi;dx=std::cos(a);dy=std::sin(a);}
 }
 void bodyDamaged(mobj_t *target,mobj_t *inflictor,mobj_t *source,int damage) {
+    monsterScanHit(target,source,damage);
     (void)damage;
     if((!settings.deathMotion&&!settings.hitFlinch&&!settings.deathDirector)||!target||!monster(*target))return;
     Hit &hit=hits[target];

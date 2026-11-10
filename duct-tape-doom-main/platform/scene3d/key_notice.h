@@ -10,7 +10,7 @@ extern int p_keypickup_card[MAXPLAYERS],p_keypickup_tic[MAXPLAYERS];
 namespace doom3d {
 // Shared presentation for keys and level milestones.
 static void drawNotice(std::vector<unsigned>& out,const std::string& title,
-                       const std::string& subtitle,unsigned color,float t,float centerY,int style=0){
+                       const std::string& subtitle,unsigned color,float t,float centerY,int style=0,bool left=false){
     // Use the IWAD's actual Doom message lettering, including its shaded bevel.
     auto glyph=[&](char c)->const Image* {
         if(c==' ')return nullptr;
@@ -51,6 +51,7 @@ static void drawNotice(std::vector<unsigned>& out,const std::string& title,
     if(t<.65f)put(width/2-line+int(2*line*std::clamp(t/.65f,0.f,1.f)),13,0xffffffff);
     float angle=((style==2?-12:-6)*(1-ease)+3*exit)*.01745329252f,c=std::cos(angle),s=std::sin(angle);
     float scale=1+.06f*std::sin(enter*3.14159265f),cx=SCREENWIDTH-8-(width+1)/2+42*(1-ease)+14*exit,cy=centerY-3*std::sin(enter*3.14159265f);
+    if(left)cx=8+(width+1)/2-42*(1-ease)-14*exit;
     if(style==2&&t<.28f){cx+=std::sin(t*90)*2*(1-t/.28f);cy+=std::cos(t*70)*(1-t/.28f);}
     if(style==1)scale+=.025f*std::sin(t*12)*std::exp(-t*2);
     if(style==3&&t<.3f)fade*=.65f+.35f*std::abs(std::sin(t*55));
@@ -70,7 +71,7 @@ static void drawNotice(std::vector<unsigned>& out,const std::string& title,
 }
 // Presentation follows game time, so pausing also pauses the entrance/fade.
 static void keyNotice(std::vector<unsigned>& out){
-    struct Notice {std::string title,subtitle;unsigned color;int start=-1;int style=0;int priority=0;};
+    struct Notice {std::string title,subtitle;unsigned color;int start=-1;int style=0;int priority=0;bool left=false;};
     static std::vector<Notice> notices;
     static doomnotice::Completion completion;
     static unsigned serial=0,level=~0u;
@@ -108,7 +109,7 @@ static void keyNotice(std::vector<unsigned>& out){
             color=weaponColors[event.detail];
         }
         int priority=event.kind==N_CYBER||event.kind==N_SPIDER||event.kind==N_PERFECT?2:event.kind==N_EXIT?1:0;
-        notices.push_back({title,subtitle,color,-1,text.style,priority});
+        notices.push_back({title,subtitle,color,-1,text.style,priority,event.kind==N_WEAPON});
     }
     // Major awards precede queued pickups without restarting visible notices.
     std::stable_sort(notices.begin(),notices.end(),[](const Notice&a,const Notice&b){
@@ -125,7 +126,7 @@ static void keyNotice(std::vector<unsigned>& out){
         float t=(clock-n.start+(paused?0:renderFraction))/35.f;
         if(M_CheckParm((char*)"-test-special-notices")||M_CheckParm((char*)"-test-completion-notices"))t=.8f;
         float centerY=94-(count-1)*14+i*28;
-        drawNotice(out,n.title,n.subtitle,n.color,t,centerY,n.style);
+        drawNotice(out,n.title,n.subtitle,n.color,t,centerY,n.style,n.left);
     }
 }
 }

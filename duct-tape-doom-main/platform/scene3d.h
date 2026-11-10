@@ -79,6 +79,8 @@ struct Settings {
     float flashlightTintGain=1;
     int emissive=1, fog=1, palette=0;
     int voxelModels=1,voxelEyes=1;
+    int monsterScanner=0;
+    int pda=1; // Optional first-hit monster identification panel.
     int keyPickupHands=1;
     int helmetFace=0;
     int cornerPeek=1,peekLeft=29,peekRight=6; // SDL scancodes Z / C.
@@ -241,6 +243,14 @@ struct VoxelInstance {
 };
 extern std::vector<VoxelInstance> voxelDraws,voxelMirrorDraws;
 std::vector<Vertex> voxelMesh(int key);
+extern std::vector<VoxelInstance> scanVoxels;
+extern std::map<int,std::vector<Vertex>> scanSprites;
+extern Uniforms scanCamera;
+extern bool scanVisible,pdaActive;
+extern float scanRect[4],pdaViewport[4],pdaCursor[2];
+extern GpuTextureRef pdaCursorTexture;
+bool prepareVoxelScan(int sprite,int frame,float angle);
+
 struct VertexSection {uint64_t id;size_t first,count;unsigned revision;uint64_t maskStamp=0;};
 extern std::map<const std::vector<Vertex>*,std::vector<VertexSection>> vertexSections;
 extern std::map<int,std::vector<Vertex>> batches,shadowBatches,decalBatches,effectBatches,effectAddBatches;

@@ -125,6 +125,7 @@ extern void (*R_WallImpact)(line_t *line, int side, fixed_t x, fixed_t y, fixed_
 // slope its vertical rise per horizontal unit (to locate the hit on the sprite).
 extern void (*R_BloodHit)(mobj_t *target, mobj_t *shooter, fixed_t x, fixed_t y, fixed_t z, fixed_t dx, fixed_t dy, fixed_t slope, int damage);
 // Every damage event, before it is applied (renderer only: who hit what, with what).
+extern void (*R_PdaPickup)(player_t *player,mobj_t *item);
 extern void (*R_DamageHit)(mobj_t *target, mobj_t *inflictor, mobj_t *source, int damage);
 // Renderer-only hitscan floor or ceiling impact (la_freeaim shots); true when
 // the renderer shows it as a splash, so no puff is spawned.

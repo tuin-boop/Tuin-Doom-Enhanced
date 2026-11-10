@@ -68,6 +68,7 @@ void (*R_SolidBulletImpact)(float x,float y,float z,float nx,float ny,float nz);
 void (*R_DoorDamage)(line_t *line, int side, fixed_t x, fixed_t y, fixed_t z, int broken);
 void (*R_WallImpact)(line_t *line, int side, fixed_t x, fixed_t y, fixed_t z);
 void (*R_BloodHit)(mobj_t *target, mobj_t *shooter, fixed_t x, fixed_t y, fixed_t z, fixed_t dx, fixed_t dy, fixed_t slope, int damage);
+void (*R_PdaPickup)(player_t *player,mobj_t *item);
 void (*R_DamageHit)(mobj_t *target, mobj_t *inflictor, mobj_t *source, int damage);
 boolean (*R_PlaneImpact)(sector_t *sector, boolean ceiling, fixed_t x, fixed_t y, fixed_t z);
 void (*R_ShotPassed)(line_t *line, fixed_t x, fixed_t y, fixed_t z, fixed_t dx, fixed_t dy);

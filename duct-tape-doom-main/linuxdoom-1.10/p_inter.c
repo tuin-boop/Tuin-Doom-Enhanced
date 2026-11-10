@@ -704,6 +704,7 @@ P_TouchSpecialThing
     if (special->flags & MF_COUNTITEM)
 	player->itemcount++;
     Arcade_Pickup(player,special);
+    if(R_PdaPickup)R_PdaPickup(player,special);
     P_RemoveMobj (special);
     player->bonuscount += BONUSADD;
     if (player == &players[consoleplayer])

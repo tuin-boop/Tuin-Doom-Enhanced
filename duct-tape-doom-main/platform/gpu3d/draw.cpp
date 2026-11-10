@@ -20,7 +20,7 @@ static size_t voxelBufferBytes=0;
 static void uploadVoxels(SDL_GPUCommandBuffer *command) {
  size_t uploaded=0;
  std::set<int> active;
- for(const auto *list:{&voxelDraws,&voxelMirrorDraws})for(const auto &v:*list)active.insert(v.meshKey);
+ for(const auto *list:{&voxelDraws,&voxelMirrorDraws,&scanVoxels})for(const auto &v:*list)active.insert(v.meshKey);
  for(int key:active)if(voxelBuffers.count(key))voxelBuffers.at(key).seen=uploadSerial;
  for(int key:active)if(!voxelBuffers.count(key)){
   auto vertices=voxelMesh(key);if(vertices.empty())continue;

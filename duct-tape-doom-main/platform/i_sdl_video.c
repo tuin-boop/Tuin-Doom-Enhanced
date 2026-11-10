@@ -150,7 +150,17 @@ void I_StartTic(void)
 #ifdef DOOM_TEST_DRIVER
     focused = false; /* Automated input must not capture the user's mouse. */
 #endif
+#ifdef DOOM_RENDER3D
+    if(accel&&I_PdaOpen())focused=false;
+#endif
     capture_mouse(focused && gamestate == GS_LEVEL && !menuactive && !paused);
+#ifdef DOOM_RENDER3D
+    if(accel&&I_PdaOpen())SDL_HideCursor();
+#endif
+#ifdef DOOM_RENDER3D
+    static int lastPda=0;
+    if(accel&&lastPda!=I_PdaOpen()){lastPda=I_PdaOpen();for(int i=0;i<SDL_SCANCODE_COUNT;++i)if(keys[i]){post(ev_keyup,keys[i],0,0);keys[i]=0;}buttons=0;post(ev_mouse,0,0,0);if(!lastPda)SDL_ShowCursor();}
+#endif
     int dx = 0;
     SDL_Event event;
     while (SDL_PollEvent(&event))
@@ -163,6 +173,17 @@ void I_StartTic(void)
         continue;
 #endif
 #ifdef DOOM_RENDER3D
+        if(accel&&(I_PdaOpen()||(event.type==SDL_EVENT_KEY_DOWN&&event.key.scancode==SDL_SCANCODE_P&&!event.key.repeat))){
+            int was=I_PdaOpen();
+            if(!was)I_PdaToggle();
+            else if(event.type==SDL_EVENT_KEY_DOWN&&!event.key.repeat)I_PdaKey(event.key.scancode);
+            else if(event.type==SDL_EVENT_MOUSE_MOTION)I_PdaMouse(event.motion.x,event.motion.y,0);
+            else if(event.type==SDL_EVENT_MOUSE_BUTTON_DOWN&&event.button.button==SDL_BUTTON_LEFT)I_PdaMouse(event.button.x,event.button.y,1);
+            else if(event.type==SDL_EVENT_MOUSE_BUTTON_UP&&event.button.button==SDL_BUTTON_LEFT)I_PdaMouse(event.button.x,event.button.y,2);
+            else if(event.type==SDL_EVENT_MOUSE_WHEEL)I_PdaScroll((int)event.wheel.y);
+            if(was!=I_PdaOpen()){for(int i=0;i<SDL_SCANCODE_COUNT;++i)if(keys[i]){post(ev_keyup,keys[i],0,0);keys[i]=0;}buttons=0;post(ev_mouse,0,0,0);dx=0;}
+            if(was||I_PdaOpen())continue;
+        }
         if(accel&&(r_photoactive||(event.type==SDL_EVENT_KEY_DOWN&&event.key.scancode==SDL_SCANCODE_F8))){
             int was=r_photoactive;
             if(event.type==SDL_EVENT_KEY_DOWN&&!event.key.repeat)I_PhotoKey(event.key.scancode);

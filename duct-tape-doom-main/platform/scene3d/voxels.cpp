@@ -47,6 +47,21 @@ void ensureTexture(Entry &e) {
  images.emplace(e.key,upload(m.texWidth,m.texHeight,pixels.data(),0,0,nullptr,normals.data()));
 }
 }
+bool prepareVoxelScan(int sprite,int frame,float angle) {
+ if(!settings.voxelModels||!voxelDetected())return false;
+ std::string key=sprnames[sprite];key+=char('A'+(frame&FF_FRAMEMASK));
+ auto found=voxelEntries.find(key);if(found==voxelEntries.end())return false;
+ try{
+  auto &e=found->second;loadModel(e);ensureTexture(e);auto &m=*e.model;
+  float cs=std::cos(angle),sn=std::sin(angle);
+  float distance=std::max({float(m.size[0]),float(m.size[1]),float(m.size[2])})*1.2f+10;
+  scanCamera.eye[1]=-distance;
+  VoxelInstance v={e.key,e.key,{0,0,0,0},{m.size[0]*.5f,m.size[1]*.5f,m.size[2]*.5f,1},{cs,sn,0,0},{0,0,0,0},{0,0,0,0},{MODE_SPRITE|MODE_VOXEL|0x40000000u,0,0xffffffffu,0}};
+  v.localEye[0]=-sn*distance+v.pivotLight[0];v.localEye[1]=cs*distance+v.pivotLight[1];v.localEye[2]=v.pivotLight[2];
+  scanVoxels.push_back(v);return true;
+ }catch(const std::exception &e){I_Error("Monster scan voxel: %s",e.what());}
+ return false;
+}
 std::vector<Vertex> voxelMesh(int key) {
  for(const auto &e:voxelEntries)if(e.second.key==key&&e.second.model){
   std::vector<Vertex> result;

@@ -447,6 +447,7 @@ void collectFlashes(float fraction,const Uniforms &camera) {
     }
     lightKind=I_RENDER3D_LIGHT_DOOR;
     doorSpill(camera);
+
 }
 float flashAt(float x,float y,float z,const Flash &f) {
     return doom_flash_at(x,y,z,&f,lightBlockers.data());

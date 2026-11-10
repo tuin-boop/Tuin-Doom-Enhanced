@@ -110,6 +110,8 @@ std::vector<OptionTab> optionTabs(Settings &s) {
                     "they follow the view. Off: they go exactly where you look, so you can miss, and where you hit is where the "
                     "wound and the fall come from. Rockets, plasma and the BFG aim as in DOOM either way.",hasFreeAim),
                 check("crosshair","Crosshair",&s.crosshair,"A small crosshair in the middle of the view."),
+                check("pda","Field PDA",&s.pda,"P opens your discovered monsters, weapons, items and powerups. Also accessible below the weapon wheel.",[](const Settings &d){return d.accelerated!=0;}),
+                check("monster_scanner","Discovery popups",&s.monsterScanner,"First monster hits and weapon pickups per map show a green rotating identification panel. Uses smooth voxel rotation when available; otherwise sprite angles. Off by default.",[](const Settings &d){return d.accelerated!=0;}),
                 check("key_pickup_hands","Key pickup hands",&s.keyPickupHands,"Quickly lower your weapon and show the collected keycard or skull. Firing cancels the animation.",[](const Settings &d){return d.accelerated!=0;}),
                 choice("helmet_face","Doomguy portrait",&s.helmetFace,{"Original","Silver helmet","Tan helmet","Silver helmet 2.0","Tan helmet 2.0"},{0,3,4,1,2},"Optional Boxart Doomguy helmets. Silver/Tan use the original artwork; 2.0 has the revised visor and faceplate. Works with classic and modern HUDs; keeps all 42 face states, including damage, turns, god mode and death."),
                 check("combat_notices","Combat achievements",&s.combatNotices,"Show close calls, multi-kills, barrel chains, fist kills and perfect clears. Boss, pickup and secret messages stay enabled."),

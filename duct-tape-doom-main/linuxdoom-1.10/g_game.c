@@ -1288,6 +1288,17 @@ void G_DoLoadGame (void)
     c = *save_p++;
     leveltime = (a<<16) + (b<<8) + c;
 
+    /* Retired portal saves may contain an already-consumed exit button.
+       Remember the map's exit specials so those buttons can be used normally. */
+    int retiredPortalBytes=(length>=2088&&!memcmp(savebuffer+length-4,"XPT1",4))?2088:0;
+    int retiredPortalActive=0;
+    int *exitSpecials=NULL;
+    if(retiredPortalBytes)memcpy(&retiredPortalActive,savebuffer+length-retiredPortalBytes,sizeof(int));
+    if(retiredPortalActive==1||retiredPortalActive==2){
+        exitSpecials=calloc(numlines,sizeof(int));
+        if(!exitSpecials)I_Error("Could not allocate exit compatibility data");
+        for(int n=0;n<numlines;n++)if(lines[n].special==11||lines[n].special==51)exitSpecials[n]=lines[n].special;
+    }
     // dearchive all the modifications
     P_UnArchivePlayers ();
     P_UnArchiveWorld ();
@@ -1303,7 +1314,11 @@ void G_DoLoadGame (void)
     // done
     {int offset=(int)(save_p+1-savebuffer)+NOTICE_SAVE_BYTES+8+numsectors;
      if(length>=offset)P_GlobalDigLoad(savebuffer+offset,length-offset);}
-    {int arenaBytes=P_ArenaLoad(savebuffer,length);SV_Load(savebuffer,length-arenaBytes); }
+    {int arenaBytes=P_ArenaLoad(savebuffer,length-retiredPortalBytes);SV_Load(savebuffer,length-arenaBytes-retiredPortalBytes);}
+    if(exitSpecials){
+        for(int n=0;n<numlines;n++)if(exitSpecials[n])lines[n].special=exitSpecials[n];
+        free(exitSpecials);
+    }
     Z_Free (savebuffer);
 
     if (setsizeneeded)

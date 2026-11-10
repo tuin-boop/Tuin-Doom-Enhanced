@@ -17,6 +17,7 @@ extern "C" int Menu_BrandOpen(void);
 #include "toasty.h"
 #include "director.h"
 #include "photo.h"
+#include "monster_scan.h"
 #include "../../assets/arcade/podium_png.h"
 extern "C" { int Arcade_PodiumRect(float*); extern int arcade_podium_hires; extern unsigned arcade_rank_pixels[SCREENWIDTH*SCREENHEIGHT]; }
 #include "../mod_soundbank.h"
@@ -163,6 +164,7 @@ void applySettings() {
     st_helmet_style=settings.helmetFace;
     P_PeekOriginHook=I_Render3DPeekOrigin;
     R_BeforeTic=settings.accelerated?beforeTic:nullptr;
+    R_PdaPickup=pdaPickup;
     R_WheelSlowMotion=+[]()->int{return wheelActive;};
     R_MuzzleFlash=settings.accelerated?fluidWeaponShot:nullptr;
     R_WeaponAttack=settings.accelerated?fluidWeaponAttack:nullptr;
@@ -563,6 +565,7 @@ FrameView prepareFrame(int w,int h) {
     }
     profileAdd(profile.frame.lightsMs,wordsStart);
     if(profile.enabled) {recordProfile();profileAdd(profile.frame.prepareMs,prepareStart);}
+    pdaViewport[0]=uiX;pdaViewport[1]=uiY;pdaViewport[2]=uiWidth;pdaViewport[3]=uiHeight;
     view.uiX=uiX;view.uiY=uiY;view.uiWidth=uiWidth;view.uiHeight=uiHeight;
     view.worldX=worldX;view.worldY=worldY;view.worldW=worldW;view.worldH=worldH;
     return view;
@@ -609,6 +612,7 @@ std::vector<unsigned> hudPixels(const unsigned *pixels) {
     if((r_photoactive||director_watch||director_demo&&demoplayback)&&!menuactive){if(!r_photoactive)std::fill(overlay.begin(),overlay.end(),0);}
     else modernHud(modern);
     directorMarkers(overlay);
+    monsterScanPanel(overlay);
     if(!r_photoactive&&!(director_demo&&demoplayback)){
     keyNotice(overlay);
     keyHandNotice();
@@ -643,6 +647,8 @@ std::vector<unsigned> hudPixels(const unsigned *pixels) {
             }
         }
     }
+    if(pdaActive){std::fill(modern.begin(),modern.end(),0);keyHandVisible=0;toastyVisible=0;romeroAge=-1;}
+    pdaDraw(overlay);
     overlay.insert(overlay.end(),modern.begin(),modern.end());
     return overlay;
 }
@@ -898,11 +904,16 @@ extern "C" int I_TestWheelInterpolation(void){
     wheelActive=wasOpen;tickTime=saved;
     worldInterpolation(SDL_GetTicksNS());return ok;
 }
+int I_PdaOpen(void){return pdaActive;}
+void I_PdaToggle(void){pdaToggle();}
+void I_PdaKey(int key){pdaKey(key);}
+void I_PdaMouse(float x,float y,int action){pdaMouse(x,y,action);}
+void I_PdaScroll(int amount){pdaScroll=std::max(0,pdaScroll-amount);}
 void I_Render3DWheelKey(int down){
     if(down>0){if(gamestate!=GS_LEVEL||menuactive||paused||demoplayback||demorecording||(netgame&&!lan_session)||players[consoleplayer].health<=0)return;wheelActive=true;wheelLevel=r_levelserial;wheelSelected=players[consoleplayer].readyweapon;wheelX=wheelY=0;}
-    else {if(down==0&&wheelActive&&gamestate==GS_LEVEL&&!menuactive&&!paused&&wheelLevel==r_levelserial&&players[consoleplayer].health>0&&wheelOwned(wheelSelected)&&wheelSelected!=players[consoleplayer].readyweapon){if(lan_session){lan_wheelweapon=wheelSelected;++lan_wheelserial;}else players[consoleplayer].pendingweapon=(weapontype_t)wheelSelected;}wheelActive=false;}
+    else {if(down==0&&wheelActive&&wheelSelected==9){wheelActive=false;pdaToggle();return;}if(down==0&&wheelActive&&gamestate==GS_LEVEL&&!menuactive&&!paused&&wheelLevel==r_levelserial&&players[consoleplayer].health>0&&wheelOwned(wheelSelected)&&wheelSelected!=players[consoleplayer].readyweapon){if(lan_session){lan_wheelweapon=wheelSelected;++lan_wheelserial;}else players[consoleplayer].pendingweapon=(weapontype_t)wheelSelected;}wheelActive=false;}
 }
-void I_Render3DWheelMove(float x,float y){if(!wheelActive)return;wheelX+=x*.35f;wheelY+=y*.35f;float radius=std::hypot(wheelX,wheelY*1.2f);if(radius>76){wheelX*=76/radius;wheelY*=76/radius;}if(radius>12){float angle=std::atan2(wheelY*1.2f,wheelX)+1.570796327f+3.141592654f/9;wheelSelected=int(std::floor(angle/(6.283185307f/9)+9))%9;}}
+void I_Render3DWheelMove(float x,float y){if(!wheelActive)return;wheelX+=x*.35f;wheelY+=y*.35f;float radius=std::hypot(wheelX,wheelY*1.2f);if(settings.pda){wheelX=std::max(-76.f,std::min(145.f,wheelX));wheelY=std::max(-63.f,std::min(63.f,wheelY));}else if(radius>76){wheelX*=76/radius;wheelY*=76/radius;}if(settings.pda&&wheelX>=100&&wheelX<146&&wheelY>=-12&&wheelY<12){wheelSelected=9;return;}if(radius>12){float angle=std::atan2(wheelY*1.2f,wheelX)+1.570796327f+3.141592654f/9;wheelSelected=int(std::floor(angle/(6.283185307f/9)+9))%9;}}
 int I_Render3DIsAccelerated(void) {return settings.accelerated;}
 int I_Render3DModernHUD(void) {return settings.accelerated&&settings.hudStyle!=0;}
 void I_Render3DFullscreenChanged(int enabled) {settings.fullscreen=enabled!=0;}

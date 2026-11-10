@@ -94,6 +94,28 @@ float plateWear=-1.0;
 #include "world/sprite_light.glsl"
 #include "world/surface_light.glsl"
 void main() {
+    // Isolated identification hologram: palette detail, green scan bands and face shading.
+    if((vMode&0x40000000u)!=0u){
+#if !defined(REFLECT)&&!defined(CUTOUT)&&!defined(COVERAGE)
+        gl_FragDepth=gl_FragCoord.z; // Preview early returns must still initialize depth.
+#endif
+        vec4 base=indexed(image,palette,vUV,false,false);if(base.a<.5)discard;
+        float value=dot(base.rgb,vec3(.25,.6,.15));
+        vec3 n=normalize(cross(dFdx(vWorld),dFdy(vWorld)));
+        float face=.65+.35*abs(dot(n,normalize(vec3(.4,-.7,.6))));
+        if((vMode&0x20000000u)!=0u){
+            // The Spectre retains its shadow appearance in the database, too.
+            // Other entries remain opaque; discovery holograms use the branch below.
+            if((vMode&MODE_FUZZ)!=0u){
+                float fuzz=fract(sin(dot(floor(gl_FragCoord.xy)+floor(c.effects.x*20.0),vec2(12.9898,78.233)))*43758.5453);
+                outColor=vec4(base.rgb*face*.3,.30+.20*fuzz);return;
+            }
+            outColor=vec4(base.rgb*face,1);return;
+        }
+          float bands=.83+.17*sin(gl_FragCoord.y*1.7+c.effects.x*4.0);
+        float sweep=pow(max(0.0,sin(vWorld.z*.045-c.effects.x*2.0)),24.0);
+        outColor=vec4(vec3(.12,1.0,.48)*(.18+value*.75)*face*bands+vec3(.25,.5,.35)*sweep,1);return;
+    }
     bool sprite=(vMode&MODE_SPRITE)!=0u;
     bool wound=sprite&&(vMode&MODE_WOUND)!=0u;
     vec3 dp1=dFdx(vWorld),dp2=dFdy(vWorld);vec2 duv1=dFdx(vUV),duv2=dFdy(vUV);

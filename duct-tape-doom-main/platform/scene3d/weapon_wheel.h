@@ -46,7 +46,8 @@ static void wheelDraw(std::vector<unsigned>& out){
         }
         text(names[slot],cx-int(strlen(names[slot]))*2,cy+10,owned?0xffedf3f3:0xff718087);
     }
-    const char* selected=wheelOwned(wheelSelected)?names[wheelSelected]:"UNAVAILABLE";
+    if(settings.pda){for(int y=88;y<112;++y)for(int x=260;x<306;++x)pixel(x,y,wheelSelected==9?0xff287452:0xff102d23);text("PDA",277,97,0xff9cffc5);}
+    const char* selected=wheelSelected==9?"FIELD PDA":wheelOwned(wheelSelected)?names[wheelSelected]:"UNAVAILABLE";
     text(selected,160-int(strlen(selected))*2,95,0xffffffff);
     text("RELEASE Q",142,106,0xff9acfdc);
     for(int y=-1;y<=1;++y)for(int x=-1;x<=1;++x)pixel(int(160+wheelX)+x,int(100+wheelY)+y,0xffffc580);
